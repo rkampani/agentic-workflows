@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perf-agent"
+version = "1.0.0"
+description = "Agentic AI Performance Testing Platform"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.39.0",
+    "mcp>=1.0.0",
+    "typer>=0.9.0",
+    "rich>=13.7.0",
+    "pyyaml>=6.0.1",
+    "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+perf-agent = "agent.main:app"
+
+[tool.setuptools.packages.find]
+include = ["agent*"]

@@ -1,0 +1,43 @@
+# ── Node / TypeScript ────────────────────────────
+node_modules/
+dist/
+*.js.map
+*.d.ts
+*.tsbuildinfo
+
+# ── Python ───────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.eggs/
+
+# ── Secrets ──────────────────────────────────────
+.env
+.env.*
+
+# ── Generated test scripts (agent creates these) ─
+test-scripts/
+
+# ── Test results (local only, never ship) ────────
+results/
+baselines/
+
+# ── Test data (synthetic, local only) ────────────
+test-data/
+
+# ── Mock service (dev tool, not shippable) ───────
+mock-service/
+
+# ── OS / IDE ─────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Claude / misc ────────────────────────────────
+.claude/
+package-lock.json

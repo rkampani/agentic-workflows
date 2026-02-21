@@ -1,0 +1,112 @@
+# Agentic Performance Testing Platform — Service Registry
+# Works with ANY framework that serves HTTP + OpenAPI.
+#
+# Supported frameworks:
+#   Spring Boot  → swagger_path: /v3/api-docs
+#   FastAPI      → swagger_path: /openapi.json
+#   Flask        → swagger_path: /swagger.json  (flask-smorest, apispec)
+#   Django REST  → swagger_path: /api/schema/    (drf-spectacular)
+#   Express.js   → swagger_path: /api-docs.json  (swagger-jsdoc)
+#   Go (Gin)     → swagger_path: /swagger/doc.json (swaggo)
+#
+# Metrics auto-detection:
+#   Spring Boot → /actuator/health + /actuator/metrics/*
+#   All others  → /health + /metrics (Prometheus format)
+
+services:
+  # ── Spring Boot Services ──────────────────────────────────
+  order-service:
+    description: "Manages customer orders, cart, and order lifecycle"
+    team: "orders"
+    framework: "spring-boot"
+    swagger_path: "/v3/api-docs"
+    environments:
+      local: "http://localhost:8081"
+      staging: "http://localhost:8081"
+
+  nutrition-service:
+    description: "Nutrition tracking, meal analysis, user health dashboard"
+    team: "health"
+    framework: "fastapi"
+    swagger_path: "/openapi.json"
+    environments:
+      local: "http://localhost:8000"
+      staging: "http://localhost:8000"
+
+  payment-service:
+    description: "Processes payments via Stripe, manages transactions"
+    team: "payments"
+    framework: "spring-boot"
+    swagger_path: "/v3/api-docs"
+    environments:
+      local: "http://localhost:8082"
+      staging: "http://localhost:8082"
+
+  # ── Python Services ───────────────────────────────────────
+  # FastAPI example
+  recommendation-engine:
+    description: "ML-powered product recommendations"
+    team: "data"
+    framework: "fastapi"
+    swagger_path: "/openapi.json"
+    environments:
+      local: "http://localhost:8000"
+      staging: "http://localhost:8000"
+
+  # Flask example
+  auth-service:
+    description: "Authentication, OAuth, JWT management"
+    team: "platform"
+    framework: "flask"
+    swagger_path: "/swagger.json"
+    environments:
+      local: "http://localhost:5000"
+      staging: "http://localhost:5000"
+
+  # Django example
+  inventory-service:
+    description: "Warehouse inventory and stock management"
+    team: "supply-chain"
+    framework: "django"
+    swagger_path: "/api/schema/"
+    environments:
+      local: "http://localhost:8080"
+      staging: "http://localhost:8080"
+
+  # ── Node.js / Go Services ─────────────────────────────────
+  notification-service:
+    description: "Email, SMS, and push notifications"
+    team: "platform"
+    framework: "express"
+    swagger_path: "/api-docs.json"
+    environments:
+      local: "http://localhost:3000"
+      staging: "http://localhost:3000"
+
+  search-service:
+    description: "Product and order search with Elasticsearch"
+    team: "platform"
+    framework: "go-gin"
+    swagger_path: "/swagger/doc.json"
+    environments:
+      local: "http://localhost:9090"
+      staging: "http://localhost:9090"
+
+  user-service:
+    description: "User management, profiles"
+    team: "platform"
+    framework: "spring-boot"
+    swagger_path: "/v3/api-docs"
+    environments:
+      local: "http://localhost:8083"
+      staging: "http://localhost:8083"
+
+# Safety settings
+defaults:
+  max_concurrent_users: 500
+  max_duration_seconds: 600
+  allowed_environments:
+    - local
+    - dev
+    - staging
+  # production is intentionally excluded

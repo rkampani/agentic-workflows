@@ -1,0 +1,19 @@
+{
+  "name": "agentic-perf-testing-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Agentic AI Performance Testing Platform for Spring Boot microservices",
+  "workspaces": [
+    "mcp-servers/service-registry",
+    "mcp-servers/perf-test-server",
+    "mcp-servers/spring-metrics",
+    "mcp-servers/results-analyzer"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "build:registry": "npm run build -w mcp-servers/service-registry",
+    "build:perf": "npm run build -w mcp-servers/perf-test-server",
+    "build:metrics": "npm run build -w mcp-servers/spring-metrics",
+    "build:analyzer": "npm run build -w mcp-servers/results-analyzer"
+  }
+}
