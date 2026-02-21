@@ -21,9 +21,9 @@ for (const dir of [SCRIPTS_DIR, RESULTS_DIR]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
-// Safety limits
-const MAX_USERS = 500;
-const MAX_DURATION_SECONDS = 600;
+// Global safety limits (used as defaults; per-service limits can be lower)
+const DEFAULT_MAX_USERS = 500;
+const DEFAULT_MAX_DURATION_SECONDS = 600;
 
 const server = new Server(
   { name: "perf-test-server", version: "1.0.0" },
@@ -69,11 +69,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           virtual_users: {
             type: "number",
-            description: `Target number of concurrent virtual users (max: ${MAX_USERS})`,
+            description: `Target number of concurrent virtual users (capped by max_concurrent_users)`,
           },
           duration_seconds: {
             type: "number",
-            description: `Test duration in seconds (max: ${MAX_DURATION_SECONDS})`,
+            description: `Test duration in seconds (capped by max_duration_seconds)`,
+          },
+          max_concurrent_users: {
+            type: "number",
+            description: `Per-service safety cap for virtual users (from service config, default: ${DEFAULT_MAX_USERS})`,
+          },
+          max_duration_seconds: {
+            type: "number",
+            description: `Per-service safety cap for duration (from service config, default: ${DEFAULT_MAX_DURATION_SECONDS})`,
           },
           ramp_up_seconds: {
             type: "number",
@@ -82,6 +90,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           thresholds: {
             type: "object",
             description: "Optional k6 thresholds (e.g., {\"http_req_duration\": [\"p(95)<500\"]})",
+          },
+          test_data_file: {
+            type: "string",
+            description: "Path to JSON test data file (relative to project root). File should contain an array of objects, each row has: path param values (user_id, meal_id...), token (for Authorization header), body_<name> (for POST/PUT bodies). Each VU gets a different row like JMeter CSV Data Set Config.",
           },
         },
         required: ["test_name", "base_url", "endpoints", "virtual_users", "duration_seconds"],
@@ -128,6 +140,9 @@ function generateK6Script(params: {
   durationSeconds: number;
   rampUpSeconds?: number;
   thresholds?: Record<string, string[]>;
+  testDataFile?: string;
+  maxConcurrentUsers?: number;
+  maxDurationSeconds?: number;
 }): string {
   const {
     testName,
@@ -137,10 +152,13 @@ function generateK6Script(params: {
     durationSeconds,
     rampUpSeconds,
     thresholds,
+    testDataFile,
+    maxConcurrentUsers = DEFAULT_MAX_USERS,
+    maxDurationSeconds = DEFAULT_MAX_DURATION_SECONDS,
   } = params;
 
-  const safeUsers = Math.min(virtualUsers, MAX_USERS);
-  const safeDuration = Math.min(durationSeconds, MAX_DURATION_SECONDS);
+  const safeUsers = Math.min(virtualUsers, maxConcurrentUsers);
+  const safeDuration = Math.min(durationSeconds, maxDurationSeconds);
   const rampUp = rampUpSeconds ?? Math.max(5, Math.floor(safeDuration * 0.1));
   const steadyState = safeDuration - rampUp * 2;
 
@@ -150,31 +168,46 @@ function generateK6Script(params: {
     ...thresholds,
   };
 
+  const hasTestData = !!testDataFile;
+
+  // Generate endpoint calls — with or without test data
   const endpointCalls = endpoints
-    .map((ep, i) => {
+    .map((ep) => {
       const method = ep.method.toLowerCase();
-      const headers = JSON.stringify({
-        "Content-Type": "application/json",
-        ...ep.headers,
-      });
+
+      // With test data: resolve {placeholders} from data row at runtime
+      // Without test data: use path as-is
+      const pathExpr = hasTestData
+        ? `resolvePath('${ep.path}', row)`
+        : `'${ep.path}'`;
+
+      const headersExpr = hasTestData ? "headers" : `{ 'Content-Type': 'application/json' }`;
 
       if (method === "get" || method === "delete") {
         return `
     // ${ep.method} ${ep.path}
     {
-      const res = http.${method}(\`\${BASE_URL}${ep.path}\`, { headers: ${headers}, tags: { endpoint: '${ep.method} ${ep.path}' } });
+      const url = \`\${BASE_URL}\${${pathExpr}}\`;
+      const res = http.${method}(url, { headers: ${headersExpr}, tags: { endpoint: '${ep.method} ${ep.path}' } });
       check(res, {
         '${ep.method} ${ep.path} status 2xx': (r) => r.status >= 200 && r.status < 300,
       });
       sleep(Math.random() * 1 + 0.5);
     }`;
       } else {
-        const body = ep.body || '{}';
+        // For POST/PUT — look for body_<last_segment> in test data, or use provided body
+        const pathSegments = ep.path.split('/').filter(Boolean);
+        const lastSegment = pathSegments[pathSegments.length - 1]?.replace(/[{}]/g, '') || 'default';
+        const bodyExpr = hasTestData
+          ? `JSON.stringify(row['body_${lastSegment}'] || ${ep.body || '{}'})`
+          : `JSON.stringify(${ep.body || '{}'})`;
+
         return `
     // ${ep.method} ${ep.path}
     {
-      const payload = JSON.stringify(${body});
-      const res = http.${method}(\`\${BASE_URL}${ep.path}\`, payload, { headers: ${headers}, tags: { endpoint: '${ep.method} ${ep.path}' } });
+      const url = \`\${BASE_URL}\${${pathExpr}}\`;
+      const payload = ${bodyExpr};
+      const res = http.${method}(url, payload, { headers: ${headersExpr}, tags: { endpoint: '${ep.method} ${ep.path}' } });
       check(res, {
         '${ep.method} ${ep.path} status 2xx': (r) => r.status >= 200 && r.status < 300,
       });
@@ -184,16 +217,44 @@ function generateK6Script(params: {
     })
     .join("\n");
 
+  // Test data setup block — only included if test_data_file is provided
+  // Resolve test data path relative to project root (not script dir)
+  const testDataAbsPath = resolve(PROJECT_ROOT, testDataFile || "");
+  const testDataBlock = hasTestData ? `
+import { SharedArray } from 'k6/data';
+
+// Load test data — each VU gets a different row (round-robin, like JMeter CSV Data Set)
+// Using absolute path because k6 resolves relative to script location, not cwd
+const testData = new SharedArray('test-data', function () {
+  return JSON.parse(open('${testDataAbsPath}'));
+});
+
+// Resolve {placeholders} in paths using data row values
+function resolvePath(path, row) {
+  return path.replace(/\\{(\\w+)\\}/g, (match, key) => row[key] !== undefined ? row[key] : match);
+}
+` : '';
+
+  const vuDataSetup = hasTestData ? `
+    // Pick a data row for this VU (round-robin across all rows)
+    const row = testData[__VU % testData.length];
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(row.token ? { 'Authorization': row.token } : {}),
+    };
+` : '';
+
   return `// Auto-generated k6 test: ${testName}
 // Generated at: ${new Date().toISOString()}
 // Target: ${baseUrl}
 // Endpoints: ${endpoints.length}
 // Max VUs: ${safeUsers}, Duration: ${safeDuration}s
+${hasTestData ? `// Test data: ${testDataFile} (each VU gets different row)` : '// No test data file — using static paths'}
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { Rate, Trend } from 'k6/metrics';
-
+import { Rate } from 'k6/metrics';
+${testDataBlock}
 const BASE_URL = __ENV.BASE_URL || '${baseUrl}';
 
 const errorRate = new Rate('errors');
@@ -215,11 +276,12 @@ export const options = {
 };
 
 export default function () {
+${vuDataSetup}
 ${endpointCalls}
 }
 
 export function handleSummary(data) {
-  const resultPath = './results/${testName}-results.json';
+  const resultPath = '${resolve(RESULTS_DIR, testName + "-results.json")}';
   return {
     'stdout': textSummary(data, { indent: ' ', enableColors: true }),
     [resultPath]: JSON.stringify(data, null, 2),
@@ -290,15 +352,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const durationSeconds = args?.duration_seconds as number;
       const rampUpSeconds = args?.ramp_up_seconds as number | undefined;
       const thresholds = args?.thresholds as Record<string, string[]> | undefined;
+      const testDataFile = args?.test_data_file as string | undefined;
+      const maxConcurrentUsers = (args?.max_concurrent_users as number) || DEFAULT_MAX_USERS;
+      const maxDurationSeconds = (args?.max_duration_seconds as number) || DEFAULT_MAX_DURATION_SECONDS;
 
-      // Safety validation
-      if (virtualUsers > MAX_USERS) {
+      // Safety validation — use per-service limits (or global defaults)
+      if (virtualUsers > maxConcurrentUsers) {
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: `Virtual users (${virtualUsers}) exceeds maximum (${MAX_USERS}). Capping at ${MAX_USERS}.`,
+                error: `Virtual users (${virtualUsers}) exceeds service limit (${maxConcurrentUsers}). Capping at ${maxConcurrentUsers}.`,
               }),
             },
           ],
@@ -306,13 +371,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      if (durationSeconds > MAX_DURATION_SECONDS) {
+      if (durationSeconds > maxDurationSeconds) {
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify({
-                error: `Duration (${durationSeconds}s) exceeds maximum (${MAX_DURATION_SECONDS}s).`,
+                error: `Duration (${durationSeconds}s) exceeds service limit (${maxDurationSeconds}s).`,
               }),
             },
           ],
@@ -328,6 +393,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         durationSeconds,
         rampUpSeconds,
         thresholds,
+        testDataFile,
+        maxConcurrentUsers,
+        maxDurationSeconds,
       });
 
       const scriptPath = resolve(SCRIPTS_DIR, `${testName}.js`);
@@ -345,8 +413,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 config: {
                   base_url: baseUrl,
                   endpoints_count: endpoints.length,
-                  virtual_users: Math.min(virtualUsers, MAX_USERS),
-                  duration_seconds: Math.min(durationSeconds, MAX_DURATION_SECONDS),
+                  virtual_users: Math.min(virtualUsers, maxConcurrentUsers),
+                  duration_seconds: Math.min(durationSeconds, maxDurationSeconds),
+                  max_concurrent_users: maxConcurrentUsers,
+                  max_duration_seconds: maxDurationSeconds,
                 },
               },
               null,
@@ -401,11 +471,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const testName = scriptName.replace(".js", "");
           const resultsPath = resolve(RESULTS_DIR, `${testName}-results.json`);
 
+          // Log k6 output for debugging
+          if (stderr) {
+            console.error(`[k6 stderr] exit=${code}\n${stderr.slice(0, 2000)}`);
+          }
+          if (stdout) {
+            console.error(`[k6 stdout] ${stdout.slice(0, 500)}`);
+          }
+
           let aggregateStats: Record<string, any>;
           if (existsSync(resultsPath)) {
             aggregateStats = parseK6Results(resultsPath);
           } else {
-            aggregateStats = { raw_summary: stdout.slice(0, 3000) };
+            // No results file — k6 likely failed. Include stderr for diagnosis
+            aggregateStats = {
+              raw_summary: stdout.slice(0, 3000) || "(no stdout)",
+              k6_errors: stderr.slice(0, 3000) || "(no stderr)",
+              hint: "k6 did not produce a results file. Check k6_errors for details.",
+            };
           }
 
           resolvePromise({
@@ -414,11 +497,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 type: "text",
                 text: JSON.stringify(
                   {
-                    status: code === 0 ? "completed" : "completed_with_threshold_failures",
+                    status: code === 0 ? "completed" : (code === null ? "crashed" : "completed_with_threshold_failures"),
                     exit_code: code,
                     test_script: scriptName,
                     results_file: resultsPath,
                     aggregate_stats: aggregateStats,
+                    ...(code !== 0 && stderr ? { k6_stderr_preview: stderr.slice(0, 1000) } : {}),
                     // GUARDRAIL: Only aggregate stats returned. Raw logs stay in results/ locally.
                   },
                   null,

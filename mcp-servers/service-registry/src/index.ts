@@ -24,7 +24,13 @@ interface ServiceConfig {
   description: string;
   team: string;
   swagger_path: string;
+  framework?: string;
   environments: ServiceEnvironments;
+  include_endpoints?: string[];
+  exclude_endpoints?: string[];
+  test_data_file?: string;
+  max_concurrent_users?: number;
+  max_duration_seconds?: number;
 }
 
 interface ServicesYaml {
@@ -171,6 +177,55 @@ function extractEndpoints(spec: any): Array<{ method: string; path: string; summ
   return endpoints;
 }
 
+// Match an endpoint against a pattern like "GET /api/orders*", "DELETE *".
+// Patterns support: "*" as wildcard, "METHOD /path" for method+path, "/path" for any method.
+function matchesPattern(method: string, path: string, pattern: string): boolean {
+  const trimmed = pattern.trim();
+
+  let patternMethod = "*";
+  let patternPath = trimmed;
+
+  // If pattern starts with an HTTP method, split it
+  const methodMatch = trimmed.match(/^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i);
+  if (methodMatch) {
+    patternMethod = methodMatch[1].toUpperCase();
+    patternPath = methodMatch[2];
+  }
+
+  // Check method match
+  if (patternMethod !== "*" && patternMethod !== method.toUpperCase()) {
+    return false;
+  }
+
+  // Convert glob pattern to regex: * → .*, escape the rest
+  const regexStr = "^" + patternPath.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$";
+  return new RegExp(regexStr).test(path);
+}
+
+function filterEndpoints(
+  endpoints: Array<{ method: string; path: string; summary: string; tags: string[] }>,
+  include?: string[],
+  exclude?: string[],
+): Array<{ method: string; path: string; summary: string; tags: string[] }> {
+  let filtered = endpoints;
+
+  // If include is defined, keep only matching endpoints
+  if (include && include.length > 0) {
+    filtered = filtered.filter((ep) =>
+      include.some((pattern) => matchesPattern(ep.method, ep.path, pattern))
+    );
+  }
+
+  // If exclude is defined, remove matching endpoints
+  if (exclude && exclude.length > 0) {
+    filtered = filtered.filter((ep) =>
+      !exclude.some((pattern) => matchesPattern(ep.method, ep.path, pattern))
+    );
+  }
+
+  return filtered;
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   const config = loadServicesConfig();
@@ -222,6 +277,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         description: svc.description,
         team: svc.team,
         swagger_path: svc.swagger_path,
+        ...(svc.include_endpoints && { include_endpoints: svc.include_endpoints }),
+        ...(svc.exclude_endpoints && { exclude_endpoints: svc.exclude_endpoints }),
+        ...(svc.test_data_file && { test_data_file: svc.test_data_file }),
+        max_concurrent_users: svc.max_concurrent_users ?? config.defaults.max_concurrent_users,
+        max_duration_seconds: svc.max_duration_seconds ?? config.defaults.max_duration_seconds,
       };
 
       if (env) {
@@ -286,7 +346,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       try {
         const spec = await fetchSwagger(baseUrl, svc.swagger_path);
-        const endpoints = extractEndpoints(spec);
+        const allEndpoints = extractEndpoints(spec);
+        const endpoints = filterEndpoints(allEndpoints, svc.include_endpoints, svc.exclude_endpoints);
+
+        const filterInfo: Record<string, any> = {};
+        if (svc.include_endpoints || svc.exclude_endpoints) {
+          filterInfo.filtering_applied = true;
+          filterInfo.total_discovered = allEndpoints.length;
+          filterInfo.after_filtering = endpoints.length;
+          filterInfo.filtered_out = allEndpoints.length - endpoints.length;
+          if (svc.include_endpoints) filterInfo.include_patterns = svc.include_endpoints;
+          if (svc.exclude_endpoints) filterInfo.exclude_patterns = svc.exclude_endpoints;
+        }
 
         return {
           content: [
@@ -299,6 +370,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   base_url: baseUrl,
                   endpoints,
                   total_endpoints: endpoints.length,
+                  ...filterInfo,
+                  ...(svc.test_data_file && { test_data_file: svc.test_data_file }),
+                  max_concurrent_users: svc.max_concurrent_users ?? config.defaults.max_concurrent_users,
+                  max_duration_seconds: svc.max_duration_seconds ?? config.defaults.max_duration_seconds,
                 },
                 null,
                 2
