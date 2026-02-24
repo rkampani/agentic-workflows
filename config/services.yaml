@@ -87,6 +87,24 @@ services:
       local: "http://localhost:8083"
       staging: "http://localhost:8083"
 
+  payment-service:
+    description: "payment-Service"
+    team: "health"
+    framework: "spring"
+    swagger_path: "/v3/api-docs"
+    environments:
+      local: "http://dc2-svzgdev01.com:11630/payment-service/v4"
+      dev: "http://dc2-svzgsys01.com:11630/payment-service/v4"
+      staging: "http://localhost:8000"
+    test_data_file: "test-data/payment-service/payment-service.json"
+    include_endpoints:
+      - "GET /order-payment/electronic-check/{entity_type}/{entity_id}"
+    exclude_endpoints:
+      - "GET /health"
+      - "/metrics*"
+    max_concurrent_users: 3
+    max_duration_seconds: 30
+
 # Safety settings
 defaults:
   max_concurrent_users: 500
