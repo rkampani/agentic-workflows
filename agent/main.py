@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import sys
+import sys
 
 import typer
 from rich.console import Console
@@ -30,27 +31,27 @@ console = Console()
 
 @app.command()
 def run(
-    message: str = typer.Argument(..., help="Natural language instruction for the agent"),
-    model: str = typer.Option(
-        "claude-sonnet-4-5-20250929",
-        "--model", "-m",
-        help="Claude model to use",
-    ),
-    ci: bool = typer.Option(
-        False,
-        "--ci",
-        help="CI/CD mode: concise output, exit code reflects pass/fail",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose", "-v",
-        help="Show detailed agent reasoning and tool calls",
-    ),
-    max_iterations: int = typer.Option(
-        30,
-        "--max-iterations",
-        help="Maximum agent loop iterations",
-    ),
+        message: str = typer.Argument(..., help="Natural language instruction for the agent"),
+        model: str = typer.Option(
+            "claude-sonnet-4-5-20250929",
+            "--model", "-m",
+            help="Claude model to use",
+        ),
+        ci: bool = typer.Option(
+            False,
+            "--ci",
+            help="CI/CD mode: concise output, exit code reflects pass/fail",
+        ),
+        verbose: bool = typer.Option(
+            False,
+            "--verbose", "-v",
+            help="Show detailed agent reasoning and tool calls",
+        ),
+        max_iterations: int = typer.Option(
+            30,
+            "--max-iterations",
+            help="Maximum agent loop iterations",
+        ),
 ):
     """Run the performance testing agent with a natural language instruction."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -95,11 +96,10 @@ def run(
             f"{result.iterations} iterations[/dim]\n"
         )
 
-
 @app.command()
 def discover(
-    service: str = typer.Argument(..., help="Service name (as defined in config/services.yaml)"),
-    env: str = typer.Option("local", "--env", "-e", help="Environment: local | dev | staging"),
+        service: str = typer.Argument(..., help="Service name (as defined in config/services.yaml)"),
+        env: str = typer.Option("local", "--env", "-e", help="Environment: local | dev | staging"),
 ):
     """Discover endpoints for a service. Does NOT require an Anthropic API key."""
     from .mcp_client import MCPClientManager
@@ -129,12 +129,29 @@ def discover(
         f"[bold]Environment:[/bold] {data.get('environment')}",
         f"[bold]Base URL:[/bold] {data.get('base_url')}",
     ]
+
+    # Show filtering details
     if data.get("filtering_applied"):
+        total = data.get('total_discovered', 0)
+        after = data.get('after_filtering', 0)
+        filtered_out = data.get('filtered_out', 0)
         lines.append(
-            f"[dim]Filtering: {data['total_discovered']} discovered → "
-            f"{data['after_filtering']} after filters "
-            f"({data['filtered_out']} skipped)[/dim]"
+            f"[dim]Filtering: {total} discovered → {after} after filters ({filtered_out} skipped)[/dim]"
         )
+
+        # Show include/exclude patterns for debugging
+        if data.get("include_patterns"):
+            patterns = data.get("include_patterns", [])
+            lines.append(f"[bold blue]Include patterns:[/bold blue]")
+            for pattern in patterns:
+                lines.append(f"  [cyan]  {pattern}[/cyan]")
+
+        if data.get("exclude_patterns"):
+            patterns = data.get("exclude_patterns", [])
+            lines.append(f"[bold red]Exclude patterns:[/bold red]")
+            for pattern in patterns:
+                lines.append(f"  [cyan]  {pattern}[/cyan]")
+
     if data.get("test_data_file"):
         lines.append(f"[dim]Test data: {data['test_data_file']}[/dim]")
     lines.append(
@@ -147,7 +164,14 @@ def discover(
     # Endpoints table
     endpoints = data.get("endpoints", [])
     if not endpoints:
-        console.print("[yellow]No testable endpoints found after filtering.[/yellow]")
+        console.print("[yellow]⚠️  No testable endpoints found after filtering.[/yellow]")
+
+        # If filtering was applied and found endpoints but they were all filtered out
+        if data.get("filtering_applied") and data.get("total_discovered", 0) > 0:
+            console.print("[yellow]Debugging tips:[/yellow]")
+            console.print("[yellow]  1. Check if include_endpoints patterns match actual endpoints[/yellow]")
+            console.print("[yellow]  2. Temporarily remove include_endpoints to list all endpoints[/yellow]")
+            console.print("[yellow]  3. Verify the service is reachable at the configured base URL[/yellow]")
         return
 
     table = Table(title=f"{len(endpoints)} Testable Endpoint(s)", show_lines=True)
