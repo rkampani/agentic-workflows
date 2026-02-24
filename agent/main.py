@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import sys
+import sys
 
 import typer
 from rich.console import Console
@@ -171,71 +172,6 @@ def discover(
             console.print("[yellow]  1. Check if include_endpoints patterns match actual endpoints[/yellow]")
             console.print("[yellow]  2. Temporarily remove include_endpoints to list all endpoints[/yellow]")
             console.print("[yellow]  3. Verify the service is reachable at the configured base URL[/yellow]")
-        return
-
-    table = Table(title=f"{len(endpoints)} Testable Endpoint(s)", show_lines=True)
-    table.add_column("Method", style="bold green", width=8)
-    table.add_column("Path", style="cyan")
-    table.add_column("Summary")
-
-    for ep in endpoints:
-        table.add_row(ep["method"], ep["path"], ep.get("summary", ""))
-
-    console.print(table)
-
-
-@app.command()
-def discover(
-    service: str = typer.Argument(..., help="Service name (as defined in config/services.yaml)"),
-    env: str = typer.Option("local", "--env", "-e", help="Environment: local | dev | staging"),
-):
-    """Discover endpoints for a service. Does NOT require an Anthropic API key."""
-    from .mcp_client import MCPClientManager
-
-    async def _discover():
-        mcp = MCPClientManager()
-        await mcp.connect_all()
-        result = await mcp.call_tool("discover_endpoints", {"service_name": service, "environment": env})
-        await mcp.disconnect_all()
-        return result
-
-    raw = asyncio.run(_discover())
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        console.print(raw)
-        return
-
-    if "error" in data:
-        console.print(f"[red]Error:[/red] {data['error']}")
-        raise typer.Exit(1)
-
-    # Summary panel
-    lines = [
-        f"[bold]Service:[/bold] {data.get('service')}",
-        f"[bold]Environment:[/bold] {data.get('environment')}",
-        f"[bold]Base URL:[/bold] {data.get('base_url')}",
-    ]
-    if data.get("filtering_applied"):
-        lines.append(
-            f"[dim]Filtering: {data['total_discovered']} discovered → "
-            f"{data['after_filtering']} after filters "
-            f"({data['filtered_out']} skipped)[/dim]"
-        )
-    if data.get("test_data_file"):
-        lines.append(f"[dim]Test data: {data['test_data_file']}[/dim]")
-    lines.append(
-        f"[dim]Safety caps: {data.get('max_concurrent_users')} max users, "
-        f"{data.get('max_duration_seconds')}s max duration[/dim]"
-    )
-
-    console.print(Panel("\n".join(lines), title="Service Discovery", border_style="cyan"))
-
-    # Endpoints table
-    endpoints = data.get("endpoints", [])
-    if not endpoints:
-        console.print("[yellow]No testable endpoints found after filtering.[/yellow]")
         return
 
     table = Table(title=f"{len(endpoints)} Testable Endpoint(s)", show_lines=True)
