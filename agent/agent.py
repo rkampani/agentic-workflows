@@ -60,7 +60,16 @@ class PerformanceAgent:
         self.max_iterations = max_iterations
         self.ci_mode = ci_mode
         self.verbose = verbose
-        self.client = anthropic.Anthropic()
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise EnvironmentError(
+                "ANTHROPIC_API_KEY is not set.\n"
+                "  • To run the full agent:  set ANTHROPIC_API_KEY in .env\n"
+                "  • To discover endpoints without a key: python -m agent discover <service>"
+            )
+
+        self.client = anthropic.Anthropic(api_key=api_key)
         self.mcp = MCPClientManager()
         self.conversation: list[dict[str, Any]] = []
         self.total_tool_calls = 0
