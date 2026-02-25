@@ -103,6 +103,7 @@ def test(
     baseline: str = typer.Option(None, "--baseline", "-b", help="Baseline name to compare against  [env: PERF_BASELINE]"),
     save_as: str = typer.Option(None, "--save-as", help="Save results as this baseline name after the test"),
     ci: bool = typer.Option(False, "--ci", help="CI mode: structured output, exit 0=pass 1=regression"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show raw tool call args and responses at each step"),
 ):
     """[DETERMINISTIC] Fixed pipeline — no Anthropic API key required.
 
@@ -122,11 +123,21 @@ def test(
         console.print("[red]Error:[/red] --service is required (or set PERF_SERVICE env var)")
         raise typer.Exit(1)
 
+    def log_tool(tool_name: str, args: dict, raw_result: str) -> None:
+        """Print tool call details when verbose mode is on."""
+        if not verbose:
+            return
+        console.print(f"    [dim]→ tool:[/dim] [bold]{tool_name}[/bold]")
+        console.print(f"    [dim]→ args:[/dim] {json.dumps(args, indent=6)[:400]}")
+        preview = raw_result[:600] + "..." if len(raw_result) > 600 else raw_result
+        console.print(f"    [dim]→ result:[/dim] {preview}")
+
     if not ci:
         console.print(Panel(
             f"[bold blue]Deterministic Performance Test[/bold blue]\n"
             f"[dim]Service: {service} | Env: {env} | "
-            f"Users: {users or 'from config'} | Duration: {duration or 'from config'}s[/dim]",
+            f"Users: {users or 'from config'} | Duration: {duration or 'from config'}s | "
+            f"Verbose: {verbose}[/dim]",
             title="Test Starting",
             border_style="blue",
         ))
@@ -135,15 +146,17 @@ def test(
         mcp = MCPClientManager()
         await mcp.connect_all()
 
+        if verbose:
+            console.print(f"\n[dim]{mcp.get_tool_summary()}[/dim]")
+
         try:
             # ── Step 1: Discover endpoints ──────────────────────────────────
             if not ci:
                 console.print(f"\n[bold cyan][1/6][/bold cyan] Discovering endpoints...")
 
-            raw = await mcp.call_tool("discover_endpoints", {
-                "service_name": service,
-                "environment": env,
-            })
+            tool_args = {"service_name": service, "environment": env}
+            raw = await mcp.call_tool("discover_endpoints", tool_args)
+            log_tool("discover_endpoints", tool_args, raw)
             discovery = json.loads(raw)
 
             if "error" in discovery:
@@ -188,6 +201,7 @@ def test(
                 script_args["test_data_file"] = test_data_file
 
             raw = await mcp.call_tool("generate_k6_script", script_args)
+            log_tool("generate_k6_script", script_args, raw)
             script_result = json.loads(raw)
 
             if "error" in script_result:
@@ -202,11 +216,9 @@ def test(
                 console.print(f"\n[bold cyan][3/6][/bold cyan] Capturing pre-test metrics...")
 
             snap_before_path = None
-            raw = await mcp.call_tool("snapshot_metrics", {
-                "base_url": base_url,
-                "label": "before",
-                "service_name": service,
-            })
+            snap_args = {"base_url": base_url, "label": "before", "service_name": service}
+            raw = await mcp.call_tool("snapshot_metrics", snap_args)
+            log_tool("snapshot_metrics", snap_args, raw)
             snap_before = json.loads(raw)
             if "error" not in snap_before:
                 snap_before_path = snap_before.get("saved_to")
@@ -220,7 +232,9 @@ def test(
             if not ci:
                 console.print(f"\n[bold cyan][4/6][/bold cyan] Running load test...")
 
-            raw = await mcp.call_tool("run_k6_test", {"script_name": f"{test_name}.js"})
+            k6_args = {"script_name": f"{test_name}.js"}
+            raw = await mcp.call_tool("run_k6_test", k6_args)
+            log_tool("run_k6_test", k6_args, raw)
             run_result = json.loads(raw)
 
             if not ci:
@@ -233,11 +247,9 @@ def test(
                 console.print(f"\n[bold cyan][5/6][/bold cyan] Capturing post-test metrics...")
 
             snap_after_path = None
-            raw = await mcp.call_tool("snapshot_metrics", {
-                "base_url": base_url,
-                "label": "after",
-                "service_name": service,
-            })
+            snap_args = {"base_url": base_url, "label": "after", "service_name": service}
+            raw = await mcp.call_tool("snapshot_metrics", snap_args)
+            log_tool("snapshot_metrics", snap_args, raw)
             snap_after = json.loads(raw)
             if "error" not in snap_after:
                 snap_after_path = snap_after.get("saved_to")
@@ -251,7 +263,9 @@ def test(
             if not ci:
                 console.print(f"\n[bold cyan][6/6][/bold cyan] Analyzing results...")
 
-            raw = await mcp.call_tool("analyze_results", {"results_file": results_file})
+            analyze_args = {"results_file": results_file}
+            raw = await mcp.call_tool("analyze_results", analyze_args)
+            log_tool("analyze_results", analyze_args, raw)
             analysis = json.loads(raw)
             verdict = "PASS"
 
@@ -261,10 +275,12 @@ def test(
             # Optional: compare against baseline
             comparison = None
             if baseline:
-                raw = await mcp.call_tool("compare_baseline", {
+                compare_args = {
                     "current_results_file": results_file,
                     "baseline_name": baseline,
-                })
+                }
+                raw = await mcp.call_tool("compare_baseline", compare_args)
+                log_tool("compare_baseline", compare_args, raw)
                 comparison = json.loads(raw)
                 verdict = comparison.get("verdict", "PASS")
                 regressions = comparison.get("regressions", [])
@@ -297,6 +313,7 @@ def test(
                 report_args["metrics_snapshots"] = snapshot_paths
 
             raw = await mcp.call_tool("generate_report", report_args)
+            log_tool("generate_report", report_args, raw)
             report_result = json.loads(raw)
 
             return {
