@@ -219,7 +219,8 @@ function generateK6Script(params: {
 
   // Test data setup block — only included if test_data_file is provided
   // Resolve test data path relative to project root (not script dir)
-  const testDataAbsPath = resolve(PROJECT_ROOT, testDataFile || "");
+  // Use forward slashes so the path is safe to embed in a JS string on Windows
+  const testDataAbsPath = resolve(PROJECT_ROOT, testDataFile || "").replace(/\\/g, '/');
   const testDataBlock = hasTestData ? `
 import { SharedArray } from 'k6/data';
 
@@ -281,7 +282,7 @@ ${endpointCalls}
 }
 
 export function handleSummary(data) {
-  const resultPath = '${resolve(RESULTS_DIR, testName + "-results.json")}';
+  const resultPath = '${resolve(RESULTS_DIR, testName + "-results.json").replace(/\\\\/g, "/")}';
   return {
     'stdout': textSummary(data, { indent: ' ', enableColors: true }),
     [resultPath]: JSON.stringify(data, null, 2),
