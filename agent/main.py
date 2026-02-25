@@ -1,16 +1,23 @@
 """
 CLI entry point for the Agentic Performance Testing Platform.
 
-Usage:
-    python -m agent "test order-service on staging"
-    python -m agent "find the breaking point of payment-service"
-    python -m agent --ci "regression check order-service staging"
+Agentic mode  (requires ANTHROPIC_API_KEY):
+    python -m agent run "test payment-service with 3 users on local"
+    python -m agent run "find the breaking point of payment-service"
+
+Deterministic mode (no API key needed):
+    python -m agent test --service payment-service --users 3 --duration 30
+    python -m agent test --service payment-service --env dev --ci
+
+Utility:
+    python -m agent discover payment-service
+    python -m agent check
+    python -m agent list-tools
 """
 
 import asyncio
 import json
 import os
-import sys
 import sys
 
 import typer
@@ -23,41 +30,31 @@ from .agent import PerformanceAgent
 
 app = typer.Typer(
     name="perf-agent",
-    help="Agentic AI Performance Testing Platform for Spring Boot microservices",
+    help="Agentic AI Performance Testing Platform",
     no_args_is_help=True,
 )
 console = Console()
 
 
+# ── Agentic mode ──────────────────────────────────────────────────────────────
+
 @app.command()
 def run(
-        message: str = typer.Argument(..., help="Natural language instruction for the agent"),
-        model: str = typer.Option(
-            "claude-sonnet-4-5-20250929",
-            "--model", "-m",
-            help="Claude model to use",
-        ),
-        ci: bool = typer.Option(
-            False,
-            "--ci",
-            help="CI/CD mode: concise output, exit code reflects pass/fail",
-        ),
-        verbose: bool = typer.Option(
-            False,
-            "--verbose", "-v",
-            help="Show detailed agent reasoning and tool calls",
-        ),
-        max_iterations: int = typer.Option(
-            30,
-            "--max-iterations",
-            help="Maximum agent loop iterations",
-        ),
+    message: str = typer.Argument(..., help="Natural language instruction for the agent"),
+    model: str = typer.Option(
+        "claude-sonnet-4-5-20250929",
+        "--model", "-m",
+        help="Claude model to use",
+    ),
+    ci: bool = typer.Option(False, "--ci", help="CI/CD mode: concise output, exit code reflects pass/fail"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed agent reasoning and tool calls"),
+    max_iterations: int = typer.Option(30, "--max-iterations", help="Maximum agent loop iterations"),
 ):
-    """Run the performance testing agent with a natural language instruction."""
+    """[AGENTIC] Natural language instruction — requires ANTHROPIC_API_KEY."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         console.print("[red]Error:[/red] ANTHROPIC_API_KEY is not set in your environment or .env file.")
-        console.print("[dim]Tip: To discover endpoints without a key, run:[/dim]")
-        console.print("  [bold]python -m agent discover <service-name>[/bold]")
+        console.print("[dim]Tip: run a deterministic test without a key:[/dim]")
+        console.print("  [bold]python -m agent test --service <name> --users 3 --duration 30[/bold]")
         raise typer.Exit(1)
 
     if not ci:
@@ -79,11 +76,9 @@ def run(
     result = asyncio.run(agent.run(message))
 
     if ci:
-        # CI mode: print result and exit with code
         print(result.response)
         sys.exit(1 if result.has_regression else 0)
     else:
-        # Interactive mode: rich output
         console.print("\n")
         console.print(Panel(
             Markdown(result.response),
@@ -96,10 +91,281 @@ def run(
             f"{result.iterations} iterations[/dim]\n"
         )
 
+
+# ── Deterministic mode ────────────────────────────────────────────────────────
+
+@app.command()
+def test(
+    service: str = typer.Option(None, "--service", "-s", help="Service name from services.yaml  [env: PERF_SERVICE]"),
+    env: str = typer.Option(None, "--env", "-e", help="Environment: local | dev | staging  [env: PERF_ENV]"),
+    users: int = typer.Option(None, "--users", "-u", help="Number of virtual users  [env: PERF_USERS]"),
+    duration: int = typer.Option(None, "--duration", "-d", help="Test duration in seconds  [env: PERF_DURATION]"),
+    baseline: str = typer.Option(None, "--baseline", "-b", help="Baseline name to compare against  [env: PERF_BASELINE]"),
+    save_as: str = typer.Option(None, "--save-as", help="Save results as this baseline name after the test"),
+    ci: bool = typer.Option(False, "--ci", help="CI mode: structured output, exit 0=pass 1=regression"),
+):
+    """[DETERMINISTIC] Fixed pipeline — no Anthropic API key required.
+
+    Parameters can be provided as flags or environment variables:
+      PERF_SERVICE, PERF_ENV, PERF_USERS, PERF_DURATION, PERF_BASELINE
+    """
+    from .mcp_client import MCPClientManager
+
+    # Resolve from env vars when not passed as flags
+    service  = service  or os.environ.get("PERF_SERVICE")
+    env      = env      or os.environ.get("PERF_ENV", "local")
+    users    = users    or (int(os.environ.get("PERF_USERS",    "0")) or None)
+    duration = duration or (int(os.environ.get("PERF_DURATION", "0")) or None)
+    baseline = baseline or os.environ.get("PERF_BASELINE")
+
+    if not service:
+        console.print("[red]Error:[/red] --service is required (or set PERF_SERVICE env var)")
+        raise typer.Exit(1)
+
+    if not ci:
+        console.print(Panel(
+            f"[bold blue]Deterministic Performance Test[/bold blue]\n"
+            f"[dim]Service: {service} | Env: {env} | "
+            f"Users: {users or 'from config'} | Duration: {duration or 'from config'}s[/dim]",
+            title="Test Starting",
+            border_style="blue",
+        ))
+
+    async def _run_pipeline():
+        mcp = MCPClientManager()
+        await mcp.connect_all()
+
+        try:
+            # ── Step 1: Discover endpoints ──────────────────────────────────
+            if not ci:
+                console.print(f"\n[bold cyan][1/6][/bold cyan] Discovering endpoints...")
+
+            raw = await mcp.call_tool("discover_endpoints", {
+                "service_name": service,
+                "environment": env,
+            })
+            discovery = json.loads(raw)
+
+            if "error" in discovery:
+                console.print(f"[red]Discovery failed:[/red] {discovery['error']}")
+                return None
+
+            endpoints = discovery.get("endpoints", [])
+            if not endpoints:
+                console.print("[red]No testable endpoints found after filtering.[/red]")
+                return None
+
+            base_url       = discovery["base_url"]
+            test_data_file = discovery.get("test_data_file")
+            max_users      = discovery.get("max_concurrent_users", 500)
+            max_duration   = discovery.get("max_duration_seconds", 600)
+
+            # Use service caps as defaults when not explicitly provided
+            eff_users    = min(users or max_users, max_users)
+            eff_duration = min(duration or max_duration, max_duration)
+
+            if not ci:
+                console.print(
+                    f"  [green]✓[/green] {len(endpoints)} endpoint(s) | "
+                    f"{eff_users} users | {eff_duration}s"
+                )
+
+            # ── Step 2: Generate k6 script ──────────────────────────────────
+            if not ci:
+                console.print(f"\n[bold cyan][2/6][/bold cyan] Generating k6 script...")
+
+            test_name   = f"{service}-deterministic"
+            script_args: dict = {
+                "test_name": test_name,
+                "base_url": base_url,
+                "endpoints": endpoints,
+                "virtual_users": eff_users,
+                "duration_seconds": eff_duration,
+                "max_concurrent_users": max_users,
+                "max_duration_seconds": max_duration,
+            }
+            if test_data_file:
+                script_args["test_data_file"] = test_data_file
+
+            raw = await mcp.call_tool("generate_k6_script", script_args)
+            script_result = json.loads(raw)
+
+            if "error" in script_result:
+                console.print(f"[red]Script generation failed:[/red] {script_result['error']}")
+                return None
+
+            if not ci:
+                console.print(f"  [green]✓[/green] {script_result.get('script_name')}")
+
+            # ── Step 3: Snapshot metrics before ─────────────────────────────
+            if not ci:
+                console.print(f"\n[bold cyan][3/6][/bold cyan] Capturing pre-test metrics...")
+
+            snap_before_path = None
+            raw = await mcp.call_tool("snapshot_metrics", {
+                "base_url": base_url,
+                "label": "before",
+                "service_name": service,
+            })
+            snap_before = json.loads(raw)
+            if "error" not in snap_before:
+                snap_before_path = snap_before.get("saved_to")
+                if not ci:
+                    console.print(f"  [green]✓[/green] Metrics captured")
+            else:
+                if not ci:
+                    console.print(f"  [yellow]⚠[/yellow]  No metrics endpoint — skipping")
+
+            # ── Step 4: Run k6 test ─────────────────────────────────────────
+            if not ci:
+                console.print(f"\n[bold cyan][4/6][/bold cyan] Running load test...")
+
+            raw = await mcp.call_tool("run_k6_test", {"script_name": f"{test_name}.js"})
+            run_result = json.loads(raw)
+
+            if not ci:
+                console.print(f"  [green]✓[/green] Status: {run_result.get('status')}")
+
+            results_file = run_result.get("results_file", "")
+
+            # ── Step 5: Snapshot metrics after ──────────────────────────────
+            if not ci:
+                console.print(f"\n[bold cyan][5/6][/bold cyan] Capturing post-test metrics...")
+
+            snap_after_path = None
+            raw = await mcp.call_tool("snapshot_metrics", {
+                "base_url": base_url,
+                "label": "after",
+                "service_name": service,
+            })
+            snap_after = json.loads(raw)
+            if "error" not in snap_after:
+                snap_after_path = snap_after.get("saved_to")
+                if not ci:
+                    console.print(f"  [green]✓[/green] Metrics captured")
+            else:
+                if not ci:
+                    console.print(f"  [yellow]⚠[/yellow]  No metrics endpoint — skipping")
+
+            # ── Step 6: Analyze + compare + report ──────────────────────────
+            if not ci:
+                console.print(f"\n[bold cyan][6/6][/bold cyan] Analyzing results...")
+
+            raw = await mcp.call_tool("analyze_results", {"results_file": results_file})
+            analysis = json.loads(raw)
+            verdict = "PASS"
+
+            if not ci:
+                console.print(f"  [green]✓[/green] Grade: {analysis.get('performance_grade', '?')}")
+
+            # Optional: compare against baseline
+            comparison = None
+            if baseline:
+                raw = await mcp.call_tool("compare_baseline", {
+                    "current_results_file": results_file,
+                    "baseline_name": baseline,
+                })
+                comparison = json.loads(raw)
+                verdict = comparison.get("verdict", "PASS")
+                regressions = comparison.get("regressions", [])
+                if not ci:
+                    if regressions:
+                        console.print(f"  [red]✗[/red]  Regressions: {', '.join(regressions)}")
+                    else:
+                        console.print(f"  [green]✓[/green] No regressions vs '{baseline}'")
+
+            # Optional: save as new baseline
+            if save_as:
+                await mcp.call_tool("save_baseline", {
+                    "results_file": results_file,
+                    "baseline_name": save_as,
+                    "metadata": {"service": service, "environment": env},
+                })
+                if not ci:
+                    console.print(f"  [green]✓[/green] Saved as baseline '{save_as}'")
+
+            # Generate Markdown report
+            report_args: dict = {
+                "results_file": results_file,
+                "service_name": service,
+                "environment": env,
+            }
+            if baseline:
+                report_args["baseline_name"] = baseline
+            snapshot_paths = [p for p in [snap_before_path, snap_after_path] if p]
+            if snapshot_paths:
+                report_args["metrics_snapshots"] = snapshot_paths
+
+            raw = await mcp.call_tool("generate_report", report_args)
+            report_result = json.loads(raw)
+
+            return {
+                "analysis": analysis,
+                "comparison": comparison,
+                "report": report_result,
+                "verdict": verdict,
+            }
+
+        finally:
+            await mcp.disconnect_all()
+
+    result = asyncio.run(_run_pipeline())
+
+    if result is None:
+        raise typer.Exit(1)
+
+    analysis  = result["analysis"]
+    verdict   = result["verdict"]
+    stats     = analysis.get("aggregate_stats", {})
+    dur_stats = stats.get("http_req_duration", {})
+    notes     = analysis.get("notes", [])
+
+    if ci:
+        has_regression = verdict != "PASS"
+        print(f"VERDICT: {'FAIL' if has_regression else 'PASS'}")
+        if result["comparison"] and result["comparison"].get("regressions"):
+            print(f"REGRESSIONS: {', '.join(result['comparison']['regressions'])}")
+        print(f"GRADE: {analysis.get('performance_grade', '?')}")
+        print(
+            f"p95: {dur_stats.get('p95_ms')}ms | "
+            f"p99: {dur_stats.get('p99_ms')}ms | "
+            f"errors: {stats.get('error_rate_percent')}%"
+        )
+        sys.exit(1 if has_regression else 0)
+    else:
+        table = Table(title=f"Results — {service} ({env})", show_lines=True)
+        table.add_column("Metric", style="bold")
+        table.add_column("Value", style="cyan")
+        table.add_row("Grade",          analysis.get("performance_grade", "?"))
+        table.add_row("p50 latency",    f"{dur_stats.get('p50_ms')}ms")
+        table.add_row("p95 latency",    f"{dur_stats.get('p95_ms')}ms")
+        table.add_row("p99 latency",    f"{dur_stats.get('p99_ms')}ms")
+        table.add_row("Error rate",     f"{stats.get('error_rate_percent')}%")
+        table.add_row("Throughput",     f"{stats.get('requests_per_second')} req/s")
+        table.add_row("Total requests", str(stats.get("total_requests")))
+        table.add_row(
+            "Verdict",
+            "[green]PASS[/green]" if verdict == "PASS" else "[red]FAIL — regression detected[/red]",
+        )
+
+        console.print("\n")
+        console.print(table)
+
+        if notes:
+            console.print("\n[bold]Notes:[/bold]")
+            for note in notes:
+                console.print(f"  [yellow]•[/yellow] {note}")
+
+        if result["report"].get("saved_to"):
+            console.print(f"\n[dim]Report saved: {result['report']['saved_to']}[/dim]")
+
+
+# ── Utility commands ──────────────────────────────────────────────────────────
+
 @app.command()
 def discover(
-        service: str = typer.Argument(..., help="Service name (as defined in config/services.yaml)"),
-        env: str = typer.Option("local", "--env", "-e", help="Environment: local | dev | staging"),
+    service: str = typer.Argument(..., help="Service name (as defined in config/services.yaml)"),
+    env: str = typer.Option("local", "--env", "-e", help="Environment: local | dev | staging"),
 ):
     """Discover endpoints for a service. Does NOT require an Anthropic API key."""
     from .mcp_client import MCPClientManager
@@ -123,35 +389,17 @@ def discover(
         console.print(f"[red]Error:[/red] {data['error']}")
         raise typer.Exit(1)
 
-    # Summary panel
     lines = [
         f"[bold]Service:[/bold] {data.get('service')}",
         f"[bold]Environment:[/bold] {data.get('environment')}",
         f"[bold]Base URL:[/bold] {data.get('base_url')}",
     ]
-
-    # Show filtering details
     if data.get("filtering_applied"):
-        total = data.get('total_discovered', 0)
-        after = data.get('after_filtering', 0)
-        filtered_out = data.get('filtered_out', 0)
         lines.append(
-            f"[dim]Filtering: {total} discovered → {after} after filters ({filtered_out} skipped)[/dim]"
+            f"[dim]Filtering: {data['total_discovered']} discovered → "
+            f"{data['after_filtering']} after filters "
+            f"({data['filtered_out']} skipped)[/dim]"
         )
-
-        # Show include/exclude patterns for debugging
-        if data.get("include_patterns"):
-            patterns = data.get("include_patterns", [])
-            lines.append(f"[bold blue]Include patterns:[/bold blue]")
-            for pattern in patterns:
-                lines.append(f"  [cyan]  {pattern}[/cyan]")
-
-        if data.get("exclude_patterns"):
-            patterns = data.get("exclude_patterns", [])
-            lines.append(f"[bold red]Exclude patterns:[/bold red]")
-            for pattern in patterns:
-                lines.append(f"  [cyan]  {pattern}[/cyan]")
-
     if data.get("test_data_file"):
         lines.append(f"[dim]Test data: {data['test_data_file']}[/dim]")
     lines.append(
@@ -161,17 +409,9 @@ def discover(
 
     console.print(Panel("\n".join(lines), title="Service Discovery", border_style="cyan"))
 
-    # Endpoints table
     endpoints = data.get("endpoints", [])
     if not endpoints:
-        console.print("[yellow]⚠️  No testable endpoints found after filtering.[/yellow]")
-
-        # If filtering was applied and found endpoints but they were all filtered out
-        if data.get("filtering_applied") and data.get("total_discovered", 0) > 0:
-            console.print("[yellow]Debugging tips:[/yellow]")
-            console.print("[yellow]  1. Check if include_endpoints patterns match actual endpoints[/yellow]")
-            console.print("[yellow]  2. Temporarily remove include_endpoints to list all endpoints[/yellow]")
-            console.print("[yellow]  3. Verify the service is reachable at the configured base URL[/yellow]")
+        console.print("[yellow]No testable endpoints found after filtering.[/yellow]")
         return
 
     table = Table(title=f"{len(endpoints)} Testable Endpoint(s)", show_lines=True)
@@ -193,11 +433,7 @@ def list_tools():
     async def _list():
         mcp = MCPClientManager()
         tools = await mcp.connect_all()
-        console.print(Panel(
-            mcp.get_tool_summary(),
-            title="Available MCP Tools",
-            border_style="cyan",
-        ))
+        console.print(Panel(mcp.get_tool_summary(), title="Available MCP Tools", border_style="cyan"))
         console.print(f"\n[bold]Tool Details:[/bold]\n")
         for tool in tools:
             console.print(f"  [bold cyan]{tool['name']}[/bold cyan]")
@@ -216,18 +452,16 @@ def check():
     async def _check():
         mcp = MCPClientManager()
         console.print("[bold]Checking MCP server connections...[/bold]\n")
-
         tools = await mcp.connect_all()
         for name, server in mcp.connected_servers.items():
-            tool_count = len(server.tools)
-            console.print(f"  [green]✓[/green] {name}: {tool_count} tools")
-
+            console.print(f"  [green]✓[/green] {name}: {len(server.tools)} tools")
         if not mcp.connected_servers:
             console.print("  [red]✗[/red] No servers connected. Run 'npm run build' first.")
         else:
-            console.print(f"\n[green]All {len(mcp.connected_servers)} servers connected, "
-                          f"{len(tools)} total tools available.[/green]")
-
+            console.print(
+                f"\n[green]All {len(mcp.connected_servers)} servers connected, "
+                f"{len(tools)} total tools available.[/green]"
+            )
         await mcp.disconnect_all()
 
     asyncio.run(_check())
