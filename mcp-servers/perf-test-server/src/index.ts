@@ -282,7 +282,7 @@ ${endpointCalls}
 }
 
 export function handleSummary(data) {
-  const resultPath = '${resolve(RESULTS_DIR, testName + "-results.json").replace(/\\\\/g, "/")}';
+  const resultPath = '${resolve(RESULTS_DIR, testName + "-results.json").replace(/\\/g, "/")}';
   return {
     'stdout': textSummary(data, { indent: ' ', enableColors: true }),
     [resultPath]: JSON.stringify(data, null, 2),
