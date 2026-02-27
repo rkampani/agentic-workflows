@@ -97,6 +97,7 @@ services:
       dev: "http://dc2-svzgsys01.com:11630/payment-service/v4"
       staging: "http://localhost:8000"
     test_data_file: "test-data/payment-service/payment-service.json"
+    token_file: "test-data/auth/tokens.json"
     include_endpoints:
       - "GET /order-payment/electronic-check/{entity_type}/{entity_id}"
     exclude_endpoints:
