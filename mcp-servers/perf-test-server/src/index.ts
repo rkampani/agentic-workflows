@@ -93,7 +93,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           test_data_file: {
             type: "string",
-            description: "Path to JSON test data file (relative to project root). File should contain an array of objects, each row has: path param values (user_id, meal_id...), token (for Authorization header), body_<name> (for POST/PUT bodies). Each VU gets a different row like JMeter CSV Data Set Config.",
+            description: "Path to JSON test data file (relative to project root). Array of objects with path param values (entityType, entityId...) and body_<name> fields. Each VU gets a different row round-robin.",
+          },
+          token_file: {
+            type: "string",
+            description: "Path to JSON token file (relative to project root). Nested object keyed by service name then environment: {\"payment-service\": {\"local\": \"Bearer eyJ...\", \"dev\": \"Bearer eyJ...\"}}. Token is selected by service_name + environment — one token per env, shared across all VUs.",
+          },
+          service_name: {
+            type: "string",
+            description: "Service name — used to look up the correct token in token_file (e.g. 'payment-service'). Required when token_file is provided.",
+          },
+          environment: {
+            type: "string",
+            description: "Environment name — used to look up the correct token in token_file (e.g. 'local', 'dev', 'staging'). Required when token_file is provided.",
           },
         },
         required: ["test_name", "base_url", "endpoints", "virtual_users", "duration_seconds"],
@@ -141,6 +153,9 @@ function generateK6Script(params: {
   rampUpSeconds?: number;
   thresholds?: Record<string, string[]>;
   testDataFile?: string;
+  tokenFile?: string;
+  serviceName?: string;
+  environment?: string;
   maxConcurrentUsers?: number;
   maxDurationSeconds?: number;
 }): string {
@@ -153,6 +168,9 @@ function generateK6Script(params: {
     rampUpSeconds,
     thresholds,
     testDataFile,
+    tokenFile,
+    serviceName = '',
+    environment = '',
     maxConcurrentUsers = DEFAULT_MAX_USERS,
     maxDurationSeconds = DEFAULT_MAX_DURATION_SECONDS,
   } = params;
@@ -169,6 +187,7 @@ function generateK6Script(params: {
   };
 
   const hasTestData = !!testDataFile;
+  const hasTokenFile = !!tokenFile;
 
   // Generate endpoint calls — with or without test data
   const endpointCalls = endpoints
@@ -181,7 +200,7 @@ function generateK6Script(params: {
         ? `resolvePath('${ep.path}', row)`
         : `'${ep.path}'`;
 
-      const headersExpr = hasTestData ? "headers" : `{ 'Content-Type': 'application/json' }`;
+      const headersExpr = (hasTestData || hasTokenFile) ? "headers" : `{ 'Content-Type': 'application/json' }`;
 
       if (method === "get" || method === "delete") {
         return `
@@ -217,15 +236,15 @@ function generateK6Script(params: {
     })
     .join("\n");
 
-  // Test data setup block — only included if test_data_file is provided
-  // Resolve test data path relative to project root (not script dir)
-  // Use forward slashes so the path is safe to embed in a JS string on Windows
-  const testDataAbsPath = resolve(PROJECT_ROOT, testDataFile || "").replace(/\\/g, '/');
-  const testDataBlock = hasTestData ? `
-import { SharedArray } from 'k6/data';
+  // Resolve absolute paths — forward slashes for safe JS string embedding on Windows
+  const testDataAbsPath = hasTestData ? resolve(PROJECT_ROOT, testDataFile!).replace(/\\/g, '/') : '';
+  const tokenAbsPath   = hasTokenFile ? resolve(PROJECT_ROOT, tokenFile!).replace(/\\/g, '/') : '';
 
-// Load test data — each VU gets a different row (round-robin, like JMeter CSV Data Set)
-// Using absolute path because k6 resolves relative to script location, not cwd
+  // SharedArray import — only needed for test data (token is a plain module-level constant)
+  const sharedArrayImport = hasTestData ? `import { SharedArray } from 'k6/data';` : '';
+
+  const testDataBlock = hasTestData ? `
+// Test data: path params + request bodies — each VU gets a different row (round-robin)
 const testData = new SharedArray('test-data', function () {
   return JSON.parse(open('${testDataAbsPath}'));
 });
@@ -236,12 +255,21 @@ function resolvePath(path, row) {
 }
 ` : '';
 
-  const vuDataSetup = hasTestData ? `
-    // Pick a data row for this VU (round-robin across all rows)
-    const row = testData[__VU % testData.length];
+  // Token is a single value per service+environment — loaded at init time, shared across all VUs
+  const tokenBlock = hasTokenFile ? `
+// Token: loaded from ${tokenFile} — keyed by service '${serviceName}' and environment '${environment}'
+const _tokenData = JSON.parse(open('${tokenAbsPath}'));
+const token = ((_tokenData['${serviceName}'] || {})['${environment}']) || null;
+` : '';
+
+  // VU setup: row from test data (per-VU round-robin) + headers
+  // If only token_file (no test data), token is already a module-level constant
+  const vuDataSetup = (hasTestData || hasTokenFile) ? `
+    ${hasTestData ? `const row = testData[__VU % testData.length];` : ''}
+    ${hasTestData && !hasTokenFile ? `const token = row.token;` : ''}
     const headers = {
       'Content-Type': 'application/json',
-      ...(row.token ? { 'Authorization': row.token } : {}),
+      ...(token ? { 'Authorization': token } : {}),
     };
 ` : '';
 
@@ -250,12 +278,14 @@ function resolvePath(path, row) {
 // Target: ${baseUrl}
 // Endpoints: ${endpoints.length}
 // Max VUs: ${safeUsers}, Duration: ${safeDuration}s
-${hasTestData ? `// Test data: ${testDataFile} (each VU gets different row)` : '// No test data file — using static paths'}
+${hasTestData  ? `// Test data:  ${testDataFile} (path params + request bodies, round-robin per VU)` : '// No test data file — using static paths'}
+${hasTokenFile ? `// Token file: ${tokenFile} (Bearer tokens, round-robin per VU independently)` : '// No token file — token sourced from test data row or omitted'}
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate } from 'k6/metrics';
-${testDataBlock}
+${sharedArrayImport}
+${testDataBlock}${tokenBlock}
 const BASE_URL = __ENV.BASE_URL || '${baseUrl}';
 
 const errorRate = new Rate('errors');
@@ -354,6 +384,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const rampUpSeconds = args?.ramp_up_seconds as number | undefined;
       const thresholds = args?.thresholds as Record<string, string[]> | undefined;
       const testDataFile = args?.test_data_file as string | undefined;
+      const tokenFile = args?.token_file as string | undefined;
+      const serviceName = args?.service_name as string | undefined;
+      const environment = args?.environment as string | undefined;
       const maxConcurrentUsers = (args?.max_concurrent_users as number) || DEFAULT_MAX_USERS;
       const maxDurationSeconds = (args?.max_duration_seconds as number) || DEFAULT_MAX_DURATION_SECONDS;
 
@@ -395,6 +428,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         rampUpSeconds,
         thresholds,
         testDataFile,
+        tokenFile,
+        serviceName,
+        environment,
         maxConcurrentUsers,
         maxDurationSeconds,
       });
@@ -418,6 +454,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   duration_seconds: Math.min(durationSeconds, maxDurationSeconds),
                   max_concurrent_users: maxConcurrentUsers,
                   max_duration_seconds: maxDurationSeconds,
+                  ...(testDataFile && { test_data_file: testDataFile }),
+                  ...(tokenFile && { token_file: tokenFile }),
                 },
               },
               null,

@@ -74,18 +74,26 @@ For each user request, you:
 - **Save baselines**: After successful tests, offer to save results as baselines for future comparison
 - **Framework-aware**: Adapt your analysis based on the detected runtime (JVM, Python, Node.js, Go)
 
-## CRITICAL: Test Data and Path Parameters
+## CRITICAL: Test Data and Token Files
 
 When `discover_endpoints` returns a `test_data_file`, you MUST pass it to `generate_k6_script` as the `test_data_file` parameter.
 The k6 script will load the file and resolve path parameters at runtime — each VU gets a different data row.
+
+When `discover_endpoints` returns a `token_file`, you MUST also pass it to `generate_k6_script` as:
+  - `token_file` — path to the tokens JSON file
+  - `service_name` — the service being tested (for the lookup key)
+  - `environment` — the environment being tested (for the lookup key)
+
+The token file is a nested JSON object keyed by service name then environment:
+  `{"payment-service": {"local": "Bearer eyJ...", "dev": "Bearer eyJ...", "staging": "Bearer eyJ..."}}`.
+One token per environment is selected at script init time and shared across all VUs for that test run.
 
 **NEVER replace {placeholders} yourself.** Pass endpoint paths EXACTLY as discovered:
   - CORRECT: pass path as `/api/v1/users/{user_id}/history` + set test_data_file
   - WRONG: replace {user_id} with "123" or any hardcoded value
 
-The test data file contains real user IDs, auth tokens, and request bodies.
-k6 reads it locally and resolves {user_id}, {meal_id}, etc. per VU at runtime.
-You never see the file contents — just pass the file path through.
+The test data file contains real user IDs and request bodies; the token file contains auth tokens.
+k6 reads both files locally — you never see their contents. Just pass the file paths through.
 
 ## Per-Service Safety Limits
 

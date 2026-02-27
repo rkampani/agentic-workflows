@@ -29,6 +29,7 @@ interface ServiceConfig {
   include_endpoints?: string[];
   exclude_endpoints?: string[];
   test_data_file?: string;
+  token_file?: string;
   max_concurrent_users?: number;
   max_duration_seconds?: number;
 }
@@ -372,6 +373,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   total_endpoints: endpoints.length,
                   ...filterInfo,
                   ...(svc.test_data_file && { test_data_file: svc.test_data_file }),
+                  ...(svc.token_file && { token_file: svc.token_file }),
                   max_concurrent_users: svc.max_concurrent_users ?? config.defaults.max_concurrent_users,
                   max_duration_seconds: svc.max_duration_seconds ?? config.defaults.max_duration_seconds,
                 },

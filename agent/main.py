@@ -170,6 +170,7 @@ def test(
 
             base_url       = discovery["base_url"]
             test_data_file = discovery.get("test_data_file")
+            token_file     = discovery.get("token_file")
             max_users      = discovery.get("max_concurrent_users", 500)
             max_duration   = discovery.get("max_duration_seconds", 600)
 
@@ -199,6 +200,10 @@ def test(
             }
             if test_data_file:
                 script_args["test_data_file"] = test_data_file
+            if token_file:
+                script_args["token_file"] = token_file
+                script_args["service_name"] = service
+                script_args["environment"] = env
 
             raw = await mcp.call_tool("generate_k6_script", script_args)
             log_tool("generate_k6_script", script_args, raw)
@@ -419,6 +424,8 @@ def discover(
         )
     if data.get("test_data_file"):
         lines.append(f"[dim]Test data: {data['test_data_file']}[/dim]")
+    if data.get("token_file"):
+        lines.append(f"[dim]Token file: {data['token_file']}[/dim]")
     lines.append(
         f"[dim]Safety caps: {data.get('max_concurrent_users')} max users, "
         f"{data.get('max_duration_seconds')}s max duration[/dim]"
