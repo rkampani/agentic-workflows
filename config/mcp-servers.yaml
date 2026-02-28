@@ -1,0 +1,26 @@
+# MCP Server Registry
+#
+# Defines how to spawn each MCP server as a subprocess.
+# Paths are relative to the project root.
+# To add a new server: add an entry here — no Python code changes needed.
+
+servers:
+  service-registry:
+    command: node
+    args:
+      - "mcp-servers/service-registry/dist/index.js"
+
+  perf-test:
+    command: node
+    args:
+      - "mcp-servers/perf-test-server/dist/index.js"
+
+  spring-metrics:
+    command: node
+    args:
+      - "mcp-servers/spring-metrics/dist/index.js"
+
+  results-analyzer:
+    command: node
+    args:
+      - "mcp-servers/results-analyzer/dist/index.js"
