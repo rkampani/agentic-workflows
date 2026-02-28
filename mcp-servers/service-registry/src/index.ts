@@ -158,19 +158,38 @@ async function fetchSwagger(baseUrl: string, swaggerPath: string): Promise<any> 
   }
 }
 
-function extractEndpoints(spec: any): Array<{ method: string; path: string; summary: string; tags: string[] }> {
-  const endpoints: Array<{ method: string; path: string; summary: string; tags: string[] }> = [];
+function extractEndpoints(spec: any): Array<{ method: string; path: string; summary: string; tags: string[]; requiredBodyFields?: string[]; bodyFieldExamples?: Record<string, any> }> {
+  const endpoints: Array<{ method: string; path: string; summary: string; tags: string[]; requiredBodyFields?: string[]; bodyFieldExamples?: Record<string, any> }> = [];
   const paths = spec.paths || {};
 
   for (const [path, methods] of Object.entries(paths)) {
     for (const [method, details] of Object.entries(methods as Record<string, any>)) {
       if (["get", "post", "put", "patch", "delete"].includes(method.toLowerCase())) {
-        endpoints.push({
+        const endpoint: { method: string; path: string; summary: string; tags: string[]; requiredBodyFields?: string[]; bodyFieldExamples?: Record<string, any> } = {
           method: method.toUpperCase(),
           path,
           summary: details.summary || details.description || "",
           tags: details.tags || [],
-        });
+        };
+
+        const schema = details.requestBody?.content?.['application/json']?.schema;
+        if (schema) {
+          endpoint.requiredBodyFields = schema.required || [];
+          const bodyFieldExamples: Record<string, any> = {};
+          for (const [field, def] of Object.entries(schema.properties || {})) {
+            const example = (def as any).example;
+            if (example !== undefined) bodyFieldExamples[field] = example;
+          }
+          // fallback: top-level schema.example object
+          if (schema.example && typeof schema.example === 'object') {
+            for (const [field, val] of Object.entries(schema.example)) {
+              if (!(field in bodyFieldExamples)) bodyFieldExamples[field] = val;
+            }
+          }
+          endpoint.bodyFieldExamples = bodyFieldExamples;
+        }
+
+        endpoints.push(endpoint);
       }
     }
   }
@@ -204,10 +223,10 @@ function matchesPattern(method: string, path: string, pattern: string): boolean 
 }
 
 function filterEndpoints(
-  endpoints: Array<{ method: string; path: string; summary: string; tags: string[] }>,
+  endpoints: Array<{ method: string; path: string; summary: string; tags: string[]; requiredBodyFields?: string[]; bodyFieldExamples?: Record<string, any> }>,
   include?: string[],
   exclude?: string[],
-): Array<{ method: string; path: string; summary: string; tags: string[] }> {
+): Array<{ method: string; path: string; summary: string; tags: string[]; requiredBodyFields?: string[]; bodyFieldExamples?: Record<string, any> }> {
   let filtered = endpoints;
 
   // If include is defined, keep only matching endpoints

@@ -193,7 +193,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 function generateK6Script(params: {
   testName: string;
   baseUrl: string;
-  endpoints: Array<{ method: string; path: string; body?: string; headers?: Record<string, string> }>;
+  endpoints: Array<{ method: string; path: string; body?: string; headers?: Record<string, string>; requiredBodyFields?: string[]; bodyFieldExamples?: Record<string, any> }>;
   virtualUsers: number;
   durationSeconds: number;
   rampUpSeconds?: number;
@@ -262,15 +262,35 @@ function generateK6Script(params: {
       sleep(Math.random() * ${TESTING_DEFAULTS.default_sleep_max_s - TESTING_DEFAULTS.default_sleep_min_s} + ${TESTING_DEFAULTS.default_sleep_min_s});
     }`;
       } else {
-        // For POST/PUT — look for body_<last_segment> in test data, or use provided body
+        // For POST/PUT/PATCH — build baseBody from OpenAPI required fields + examples at generation time.
+        // Test data body (if present) is merged on top, overriding required fields and adding optional ones.
         const pathSegments = ep.path.split('/').filter(Boolean);
         const lastSegment = pathSegments[pathSegments.length - 1]?.replace(/[{}]/g, '') || 'default';
-        const bodyExpr = hasTestData
-          ? `JSON.stringify(row['body_${lastSegment}'] || ${ep.body || '{}'})`
-          : `JSON.stringify(${ep.body || '{}'})`;
+        const lastNonParamSegment = [...pathSegments].reverse().find(s => !s.startsWith('{'))?.replace(/[{}]/g, '') || lastSegment;
+        const methodPathKey = `body_${ep.method}_${ep.path}`;
+
+        // Build baseBody: required fields that have an OpenAPI example
+        const requiredFields: string[] = ep.requiredBodyFields || [];
+        const examples: Record<string, any> = ep.bodyFieldExamples || {};
+        const baseBody: Record<string, any> = {};
+        for (const field of requiredFields) {
+          if (field in examples) baseBody[field] = examples[field];
+        }
+        const baseBodyJson = JSON.stringify(baseBody);
+
+        // testBodyExpr: resolves to the test data body object at k6 runtime, or null if absent
+        const testBodyExpr = hasTestData
+          ? `(row[${JSON.stringify(methodPathKey)}] || row['body_${lastNonParamSegment}'] || row['body_${lastSegment}'] || null)`
+          : `null`;
+
+        const bodyExpr = `JSON.stringify(Object.assign({}, ${baseBodyJson}, ${testBodyExpr} || {}))`;
+
+        const requiredFieldNames = requiredFields.join(', ') || '(none)';
 
         return `
     // ${ep.method} ${ep.path}
+    // required fields (OpenAPI): ${requiredFieldNames}
+    // optional fields: only if test data row provides '${methodPathKey}' or 'body_${lastNonParamSegment}' or 'body_${lastSegment}'
     {
       const url = \`\${BASE_URL}\${${pathExpr}}\`;
       const payload = ${bodyExpr};
@@ -426,6 +446,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         path: string;
         body?: string;
         headers?: Record<string, string>;
+        requiredBodyFields?: string[];
+        bodyFieldExamples?: Record<string, any>;
       }>;
       const virtualUsers = args?.virtual_users as number;
       const durationSeconds = args?.duration_seconds as number;
