@@ -9,6 +9,7 @@ import {
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { parse } from "yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../../..");
@@ -19,6 +20,61 @@ const REPORTS_DIR = resolve(PROJECT_ROOT, "results", "reports");
 for (const dir of [RESULTS_DIR, BASELINES_DIR, REPORTS_DIR]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
+
+// --- Config Loading ---
+
+interface GradingConfig {
+  regression_threshold_percent: number;
+  error_rate_regression_baseline: number;
+  penalties: {
+    p95_poor_ms: number;       p95_poor_points: number;
+    p95_fair_ms: number;       p95_fair_points: number;
+    p95_good_ms: number;       p95_good_points: number;
+    tail_ratio_warning: number; tail_ratio_points: number;
+    error_critical_percent: number; error_critical_points: number;
+    error_warning_percent: number;  error_warning_points: number;
+  };
+  grades: Array<{ min_score: number; grade: string }>;
+}
+
+function loadGradingConfig(): GradingConfig {
+  const fallback: GradingConfig = {
+    regression_threshold_percent: 10,
+    error_rate_regression_baseline: 1.0,
+    penalties: {
+      p95_poor_ms: 2000,       p95_poor_points: 30,
+      p95_fair_ms: 1000,       p95_fair_points: 15,
+      p95_good_ms: 500,        p95_good_points: 5,
+      tail_ratio_warning: 3.0, tail_ratio_points: 15,
+      error_critical_percent: 5.0, error_critical_points: 30,
+      error_warning_percent: 1.0,  error_warning_points: 15,
+    },
+    grades: [
+      { min_score: 90, grade: "A" },
+      { min_score: 80, grade: "B" },
+      { min_score: 70, grade: "C" },
+      { min_score: 50, grade: "D" },
+      { min_score: 0,  grade: "F" },
+    ],
+  };
+  try {
+    const configPath = process.env.DEFAULTS_CONFIG_PATH
+      || resolve(PROJECT_ROOT, "config/defaults.yaml");
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parse(raw) as any;
+    const g = parsed?.grading || {};
+    return {
+      regression_threshold_percent: g.regression_threshold_percent ?? fallback.regression_threshold_percent,
+      error_rate_regression_baseline: g.error_rate_regression_baseline ?? fallback.error_rate_regression_baseline,
+      penalties: { ...fallback.penalties, ...(g.penalties || {}) },
+      grades: g.grades ?? fallback.grades,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+const GRADING = loadGradingConfig();
 
 const server = new Server(
   { name: "results-analyzer", version: "1.0.0" },
@@ -192,36 +248,55 @@ function resolveResultsPath(filePath: string): string {
 function gradePerformance(stats: Record<string, any>): { grade: string; notes: string[] } {
   const notes: string[] = [];
   let score = 100;
+  const p = GRADING.penalties;
 
   const p95 = stats.http_req_duration?.p95_ms;
   const p99 = stats.http_req_duration?.p99_ms;
   const errorRate = stats.error_rate_percent;
 
   if (p95 !== null) {
-    if (p95 > 2000) { score -= 30; notes.push(`p95 latency is very high (${p95}ms)`); }
-    else if (p95 > 1000) { score -= 15; notes.push(`p95 latency is elevated (${p95}ms)`); }
-    else if (p95 > 500) { score -= 5; notes.push(`p95 latency is moderate (${p95}ms)`); }
+    if (p95 > p.p95_poor_ms) {
+      score -= p.p95_poor_points;
+      notes.push(`p95 latency is very high (${p95}ms)`);
+    } else if (p95 > p.p95_fair_ms) {
+      score -= p.p95_fair_points;
+      notes.push(`p95 latency is elevated (${p95}ms)`);
+    } else if (p95 > p.p95_good_ms) {
+      score -= p.p95_good_points;
+      notes.push(`p95 latency is moderate (${p95}ms)`);
+    }
   }
 
   if (p99 !== null && p95 !== null) {
     const tailRatio = p99 / p95;
-    if (tailRatio > 3) { score -= 15; notes.push(`High tail latency ratio (p99/p95 = ${round(tailRatio)}x)`); }
-    else if (tailRatio > 2) { score -= 5; notes.push(`Moderate tail latency (p99/p95 = ${round(tailRatio)}x)`); }
+    if (tailRatio > p.tail_ratio_warning) {
+      score -= p.tail_ratio_points;
+      notes.push(`High tail latency ratio (p99/p95 = ${round(tailRatio)}x)`);
+    } else if (tailRatio > 2) {
+      score -= 5;
+      notes.push(`Moderate tail latency (p99/p95 = ${round(tailRatio)}x)`);
+    }
   }
 
   if (errorRate !== null) {
-    if (errorRate > 5) { score -= 30; notes.push(`Error rate is critical (${errorRate}%)`); }
-    else if (errorRate > 1) { score -= 15; notes.push(`Error rate is elevated (${errorRate}%)`); }
-    else if (errorRate > 0.1) { score -= 5; notes.push(`Minor error rate (${errorRate}%)`); }
+    if (errorRate > p.error_critical_percent) {
+      score -= p.error_critical_points;
+      notes.push(`Error rate is critical (${errorRate}%)`);
+    } else if (errorRate > p.error_warning_percent) {
+      score -= p.error_warning_points;
+      notes.push(`Error rate is elevated (${errorRate}%)`);
+    } else if (errorRate > 0.1) {
+      score -= 5;
+      notes.push(`Minor error rate (${errorRate}%)`);
+    }
   }
 
   score = Math.max(0, score);
-  let grade: string;
-  if (score >= 90) grade = "A";
-  else if (score >= 80) grade = "B";
-  else if (score >= 70) grade = "C";
-  else if (score >= 50) grade = "D";
-  else grade = "F";
+
+  // Find grade from config (grades are sorted highest first)
+  const sorted = [...GRADING.grades].sort((a, b) => b.min_score - a.min_score);
+  const matched = sorted.find((g) => score >= g.min_score);
+  const grade = matched?.grade ?? "F";
 
   return { grade, notes };
 }
@@ -308,9 +383,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             baseline: baselineStats.http_req_duration[metric],
             ...delta,
           };
-          if (delta.percent !== null && delta.percent > 10) {
+          if (delta.percent !== null && delta.percent > GRADING.regression_threshold_percent) {
             regressions.push(`${metric} increased ${delta.percent}%`);
-          } else if (delta.percent !== null && delta.percent < -10) {
+          } else if (delta.percent !== null && delta.percent < -GRADING.regression_threshold_percent) {
             improvements.push(`${metric} decreased ${Math.abs(delta.percent)}%`);
           }
         }
@@ -325,7 +400,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           baseline: baselineStats.requests_per_second,
           ...throughputDelta,
         };
-        if (throughputDelta.percent !== null && throughputDelta.percent < -10) {
+        if (throughputDelta.percent !== null && throughputDelta.percent < -GRADING.regression_threshold_percent) {
           regressions.push(`Throughput decreased ${Math.abs(throughputDelta.percent)}%`);
         }
 
@@ -339,8 +414,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           baseline: baselineStats.error_rate_percent,
           ...errorDelta,
         };
-        if (currentStats.error_rate_percent > 1 && baselineStats.error_rate_percent <= 1) {
-          regressions.push(`Error rate crossed 1% threshold`);
+        if (
+          currentStats.error_rate_percent > GRADING.error_rate_regression_baseline &&
+          baselineStats.error_rate_percent <= GRADING.error_rate_regression_baseline
+        ) {
+          regressions.push(`Error rate crossed ${GRADING.error_rate_regression_baseline}% threshold`);
         }
 
         const hasRegression = regressions.length > 0;

@@ -22,29 +22,6 @@
 #     headers:      header_<name>               → sent as custom header
 
 services:
-  bitewise-service:
-    description: "Bitewise tracking, meal analysis, user health dashboard"
-    team: "health"
-    framework: "fastapi"
-    swagger_path: "/openapi.json"
-    environments:
-      local: "http://localhost:8000"
-      staging: "http://localhost:8000"
-    test_data_file: "test-data/bitewise-service.json"
-    include_endpoints:
-      - "GET /api/v1/users/{user_id}"
-    exclude_endpoints:
-      - "GET /health"
-      - "*/cache/*"
-      - "*/debug/*"
-      - "DELETE *"
-      - "*/deactivate"
-      - "*/data"
-      - "*/export*"
-      - "*/import*"
-      - "/metrics*"
-    max_concurrent_users: 10
-    max_duration_seconds: 30
 
   recommendation-engine:
     description: "ML-powered product recommendations"
@@ -54,29 +31,6 @@ services:
     environments:
       local: "http://localhost:8000"
       staging: "http://localhost:8000"
-
-  auth-service:
-    description: "Authentication, OAuth, JWT management"
-    team: "platform"
-    framework: "flask"
-    swagger_path: "/swagger.json"
-    environments:
-      local: "http://localhost:5000"
-      staging: "http://localhost:5000"
-    exclude_endpoints:
-      - "*/admin/*"
-      - "DELETE *"
-
-  notification-service:
-    description: "Email, SMS, and push notifications"
-    team: "platform"
-    framework: "express"
-    swagger_path: "/api-docs.json"
-    environments:
-      local: "http://localhost:3000"
-      staging: "http://localhost:3000"
-    exclude_endpoints:
-      - "POST /api/notifications/send*"
 
   user-service:
     description: "User management, profiles"
@@ -93,13 +47,13 @@ services:
     framework: "spring"
     swagger_path: "/v3/api-docs"
     environments:
-      local: "http://dc2-svzgdev01.com:11630/payment-service/v4"
-      dev: "http://dc2-svzgsys01.com:11630/payment-service/v4"
+      local: "http://localhost:9080/payment-service/v1"
+      dev: "http://localhost:9080/payment-service/v1"
       staging: "http://localhost:8000"
     test_data_file: "test-data/payment-service/payment-service.json"
     token_file: "test-data/auth/tokens.json"
     include_endpoints:
-      - "GET /order-payment/electronic-check/{entity_type}/{entity_id}"
+      - "GET /order-payment/electronic-check/{entityType}/{entityId}"
     exclude_endpoints:
       - "GET /health"
       - "/metrics*"

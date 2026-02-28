@@ -1,0 +1,57 @@
+# Agentic Performance Testing Platform — Default Configuration
+#
+# All values here are used as fallbacks when not specified elsewhere.
+# Override per-service values in config/services.yaml.
+# All TypeScript MCP servers and the Python agent read this file at startup.
+
+agent:
+  model: "claude-sonnet-4-6"
+  max_iterations: 30
+  max_tokens: 8192
+
+testing:
+  ramp_up_ratio: 0.10             # fraction of total duration used for ramp-up
+  min_ramp_up_seconds: 5          # floor on ramp-up regardless of duration
+  default_sleep_min_s: 0.5        # per-request think time range (seconds)
+  default_sleep_max_s: 1.5
+  default_max_users: 500
+  default_max_duration_seconds: 600
+  k6_thresholds:
+    http_req_duration:
+      - "p(95)<2000"
+      - "p(99)<5000"
+    http_req_failed:
+      - "rate<0.1"
+
+grading:
+  regression_threshold_percent: 10.0    # % latency increase triggers regression flag
+  error_rate_regression_baseline: 1.0   # error rate crossing this threshold = regression
+  penalties:
+    p95_poor_ms: 2000                   # p95 above this → heavy penalty
+    p95_poor_points: 30
+    p95_fair_ms: 1000
+    p95_fair_points: 15
+    p95_good_ms: 500
+    p95_good_points: 5
+    tail_ratio_warning: 3.0             # p99/p95 above this → tail latency penalty
+    tail_ratio_points: 15
+    error_critical_percent: 5.0
+    error_critical_points: 30
+    error_warning_percent: 1.0
+    error_warning_points: 15
+  grades:
+    - { min_score: 90, grade: "A" }
+    - { min_score: 80, grade: "B" }
+    - { min_score: 70, grade: "C" }
+    - { min_score: 50, grade: "D" }
+    - { min_score: 0,  grade: "F" }
+
+metrics:
+  fetch_timeout_ms: 5000
+  swagger_fetch_timeout_ms: 10000
+  health_paths:
+    - "/health"
+    - "/healthz"
+    - "/actuator/health"
+    - "/api/health"
+    - "/_health"

@@ -10,6 +10,7 @@ import { spawn } from "child_process";
 import { writeFileSync, readFileSync, readdirSync, existsSync, mkdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { parse } from "yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../../..");
@@ -21,9 +22,54 @@ for (const dir of [SCRIPTS_DIR, RESULTS_DIR]) {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
-// Global safety limits (used as defaults; per-service limits can be lower)
-const DEFAULT_MAX_USERS = 500;
-const DEFAULT_MAX_DURATION_SECONDS = 600;
+// --- Config Loading ---
+
+interface TestingDefaults {
+  ramp_up_ratio: number;
+  min_ramp_up_seconds: number;
+  default_sleep_min_s: number;
+  default_sleep_max_s: number;
+  default_max_users: number;
+  default_max_duration_seconds: number;
+  k6_thresholds: Record<string, string[]>;
+}
+
+function loadTestingDefaults(): TestingDefaults {
+  const fallback: TestingDefaults = {
+    ramp_up_ratio: 0.10,
+    min_ramp_up_seconds: 5,
+    default_sleep_min_s: 0.5,
+    default_sleep_max_s: 1.5,
+    default_max_users: 500,
+    default_max_duration_seconds: 600,
+    k6_thresholds: {
+      http_req_duration: ["p(95)<2000", "p(99)<5000"],
+      http_req_failed: ["rate<0.1"],
+    },
+  };
+  try {
+    const configPath = process.env.DEFAULTS_CONFIG_PATH
+      || resolve(PROJECT_ROOT, "config/defaults.yaml");
+    const raw = readFileSync(configPath, "utf-8");
+    const parsed = parse(raw) as any;
+    const t = parsed?.testing || {};
+    return {
+      ramp_up_ratio: t.ramp_up_ratio ?? fallback.ramp_up_ratio,
+      min_ramp_up_seconds: t.min_ramp_up_seconds ?? fallback.min_ramp_up_seconds,
+      default_sleep_min_s: t.default_sleep_min_s ?? fallback.default_sleep_min_s,
+      default_sleep_max_s: t.default_sleep_max_s ?? fallback.default_sleep_max_s,
+      default_max_users: t.default_max_users ?? fallback.default_max_users,
+      default_max_duration_seconds: t.default_max_duration_seconds ?? fallback.default_max_duration_seconds,
+      k6_thresholds: t.k6_thresholds ?? fallback.k6_thresholds,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+const TESTING_DEFAULTS = loadTestingDefaults();
+const DEFAULT_MAX_USERS = TESTING_DEFAULTS.default_max_users;
+const DEFAULT_MAX_DURATION_SECONDS = TESTING_DEFAULTS.default_max_duration_seconds;
 
 const server = new Server(
   { name: "perf-test-server", version: "1.0.0" },
@@ -177,12 +223,14 @@ function generateK6Script(params: {
 
   const safeUsers = Math.min(virtualUsers, maxConcurrentUsers);
   const safeDuration = Math.min(durationSeconds, maxDurationSeconds);
-  const rampUp = rampUpSeconds ?? Math.max(5, Math.floor(safeDuration * 0.1));
+  const rampUp = rampUpSeconds ?? Math.max(
+    TESTING_DEFAULTS.min_ramp_up_seconds,
+    Math.floor(safeDuration * TESTING_DEFAULTS.ramp_up_ratio),
+  );
   const steadyState = safeDuration - rampUp * 2;
 
   const defaultThresholds = {
-    http_req_duration: ["p(95)<2000", "p(99)<5000"],
-    http_req_failed: ["rate<0.1"],
+    ...TESTING_DEFAULTS.k6_thresholds,
     ...thresholds,
   };
 
@@ -211,7 +259,7 @@ function generateK6Script(params: {
       check(res, {
         '${ep.method} ${ep.path} status 2xx': (r) => r.status >= 200 && r.status < 300,
       });
-      sleep(Math.random() * 1 + 0.5);
+      sleep(Math.random() * ${TESTING_DEFAULTS.default_sleep_max_s - TESTING_DEFAULTS.default_sleep_min_s} + ${TESTING_DEFAULTS.default_sleep_min_s});
     }`;
       } else {
         // For POST/PUT — look for body_<last_segment> in test data, or use provided body
@@ -230,7 +278,7 @@ function generateK6Script(params: {
       check(res, {
         '${ep.method} ${ep.path} status 2xx': (r) => r.status >= 200 && r.status < 300,
       });
-      sleep(Math.random() * 1 + 0.5);
+      sleep(Math.random() * ${TESTING_DEFAULTS.default_sleep_max_s - TESTING_DEFAULTS.default_sleep_min_s} + ${TESTING_DEFAULTS.default_sleep_min_s});
     }`;
       }
     })
