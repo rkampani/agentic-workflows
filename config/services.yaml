@@ -7,19 +7,29 @@
 #
 # Test data (like JMeter CSV Data Set Config):
 #   test_data_file → JSON file with array of rows
-#   Each VU gets a different row (round-robin across 500 users)
-#   Row fields replace {placeholders} in paths and provide auth/body data
+#   Each VU gets a different row (round-robin)
+#   Row fields replace {placeholders} in paths and provide body data
 #
-#   Example row: {"user_id": "1", "token": "Bearer ...", "body_analyze": {...}}
-#   → GET /api/v1/users/{user_id}/history  becomes  /api/v1/users/1/history
-#   → Authorization header gets "Bearer ..."
-#   → POST /api/v1/analyze body gets body_analyze value
+#   Flat style (preferred — OpenAPI schema filters which fields go in the body):
+#     {"user_id": "1", "billToId": 1223, "amount": 100}
+#     → GET /api/v1/users/{user_id}/history  resolves to  /api/v1/users/1/history
+#     → POST /api/v1/orders body = {"billToId": 1223, "amount": 100}  (only OpenAPI fields)
 #
-#   Field naming conventions:
-#     path params:  user_id, meal_id, order_id  → replaces {user_id} etc.
-#     auth token:   token                       → sent as Authorization header
-#     request body: body_<endpoint_name>        → used for POST/PUT to that endpoint
-#     headers:      header_<name>               → sent as custom header
+#   Explicit style (for rows covering multiple endpoints with different bodies):
+#     {"user_id": "1", "body_POST_/api/v1/orders": {"billToId": 1223}}
+#     → body_<METHOD>_<path> targets a specific endpoint explicitly
+#     → fallback key: body_<last-path-segment>  (e.g. body_orders)
+#
+# Authentication:
+#   auth → k6 calls this endpoint ONCE in setup() before load starts.
+#   The returned token is shared across all VUs. No static token files needed.
+#
+#   auth:
+#     url: "http://host/auth/token"    # POST endpoint that returns a token
+#     username: "testuser"
+#     password: "testpass"
+#     token_field: "access_token"      # optional — which JSON field holds the token
+#                                      # (default: tries access_token, token, id_token)
 
 services:
 
@@ -51,7 +61,11 @@ services:
       dev: "http://localhost:9080/payment-service/v1"
       staging: "http://localhost:8000"
     test_data_file: "test-data/payment-service/payment-service.json"
-    token_file: "test-data/auth/tokens.json"
+    auth:
+      url: "http://localhost:9080/auth/token"
+      username: "testuser"
+      password: "testpass"
+      # token_field defaults to "access_token" (see config/defaults.yaml)
     include_endpoints:
       - "GET /order-payment/electronic-check/{entityType}/{entityId}"
     exclude_endpoints:

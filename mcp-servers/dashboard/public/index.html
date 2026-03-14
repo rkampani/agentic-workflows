@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Perf Testing Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="logo">⚡ PerfAgent</div>
+    <nav>
+      <button class="nav-btn active" data-tab="run">Run Test</button>
+      <button class="nav-btn" data-tab="results">Results</button>
+    </nav>
+  </header>
+
+  <!-- ── RUN TAB ── -->
+  <main id="tab-run" class="tab active">
+    <div class="mode-toggle">
+      <button class="mode-btn active" data-mode="deterministic">
+        <span class="icon">🎯</span>
+        <span>
+          <strong>Deterministic</strong>
+          <small>Fixed parameters — reproducible runs</small>
+        </span>
+      </button>
+      <button class="mode-btn" data-mode="agent">
+        <span class="icon">🤖</span>
+        <span>
+          <strong>Agent Mode</strong>
+          <small>Describe what to test — AI decides</small>
+        </span>
+      </button>
+    </div>
+
+    <!-- Deterministic form -->
+    <section id="form-deterministic" class="run-form card">
+      <h2>Configure Test</h2>
+      <div class="form-grid">
+        <label>
+          Service
+          <select id="d-service" required>
+            <option value="">Loading...</option>
+          </select>
+        </label>
+        <label>
+          Environment
+          <select id="d-env">
+            <option value="local">local</option>
+          </select>
+        </label>
+        <label>
+          Virtual Users
+          <input type="number" id="d-users" placeholder="Use service default" min="1" />
+        </label>
+        <label>
+          Duration (seconds)
+          <input type="number" id="d-duration" placeholder="Use service default" min="10" />
+        </label>
+        <label>
+          Compare Baseline
+          <input type="text" id="d-baseline" placeholder="e.g. v1.0-baseline (optional)" />
+        </label>
+        <label>
+          Save As Baseline
+          <input type="text" id="d-save-as" placeholder="e.g. v1.1-baseline (optional)" />
+        </label>
+      </div>
+      <button id="d-run-btn" class="run-btn">▶ Start Test</button>
+    </section>
+
+    <!-- Agent form -->
+    <section id="form-agent" class="run-form card" style="display:none">
+      <h2>Describe What You Want to Test</h2>
+      <textarea
+        id="a-message"
+        rows="4"
+        placeholder="e.g. Run a load test on payment-service local with 10 users for 60 seconds and compare against the v1.0 baseline"
+      ></textarea>
+      <button id="a-run-btn" class="run-btn">▶ Ask Agent</button>
+    </section>
+
+    <!-- Live output -->
+    <section id="run-output" class="card" style="display:none">
+      <div class="output-header">
+        <h3>Live Output</h3>
+        <span id="run-badge" class="badge badge-running">RUNNING</span>
+      </div>
+      <div id="log-stream" class="log-stream"></div>
+    </section>
+  </main>
+
+  <!-- ── RESULTS TAB ── -->
+  <main id="tab-results" class="tab">
+    <div class="results-layout">
+      <!-- Result list -->
+      <aside class="results-list card">
+        <h2>Past Runs</h2>
+        <div id="results-index">Loading...</div>
+      </aside>
+
+      <!-- Result detail -->
+      <section id="results-detail" class="card">
+        <div id="detail-empty" class="empty-state">
+          <p>Select a run from the list to view its metrics.</p>
+        </div>
+        <div id="detail-content" style="display:none">
+          <h2 id="detail-title"></h2>
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">p95 Latency</div>
+              <div class="metric-value" id="m-p95">—</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">p99 Latency</div>
+              <div class="metric-value" id="m-p99">—</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Throughput</div>
+              <div class="metric-value" id="m-rps">—</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Error Rate</div>
+              <div class="metric-value" id="m-err">—</div>
+            </div>
+          </div>
+          <div class="charts-row">
+            <div class="chart-wrap">
+              <h4>Latency Distribution (ms)</h4>
+              <canvas id="chart-latency"></canvas>
+            </div>
+            <div class="chart-wrap">
+              <h4>Thresholds</h4>
+              <div id="threshold-list" class="threshold-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
