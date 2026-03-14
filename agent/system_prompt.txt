@@ -1,0 +1,1 @@
+This file has moved to agent/prompts/system_prompt.txt

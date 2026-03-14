@@ -46,6 +46,14 @@ grading:
     - { min_score: 50, grade: "D" }
     - { min_score: 0,  grade: "F" }
 
+auth:
+  # Global auth defaults — override per service in services.yaml.
+  # url / username / password must be set per service (or shared here if all services use the same IdP).
+  token_field: "access_token"   # which JSON field in the auth response holds the bearer token
+  # url:      "http://localhost:9080/auth/token"
+  # username: "perf-test-user"
+  # password: "changeme"
+
 metrics:
   fetch_timeout_ms: 5000
   swagger_fetch_timeout_ms: 10000

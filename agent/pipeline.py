@@ -86,7 +86,7 @@ class DeterministicPipeline:
             "endpoints": endpoints,
             "base_url": discovery["base_url"],
             "test_data_file": discovery.get("test_data_file"),
-            "token_file": discovery.get("token_file"),
+            "auth_config": discovery.get("auth_config"),
             "max_users": max_users,
             "max_duration": max_duration,
             "eff_users": min(cfg.users or max_users, max_users),
@@ -107,10 +107,13 @@ class DeterministicPipeline:
         }
         if discovery["test_data_file"]:
             script_args["test_data_file"] = discovery["test_data_file"]
-        if discovery["token_file"]:
-            script_args["token_file"] = discovery["token_file"]
-            script_args["service_name"] = cfg.service
-            script_args["environment"] = cfg.env
+        if discovery["auth_config"]:
+            auth = discovery["auth_config"]
+            script_args["auth_url"] = auth["url"]
+            script_args["auth_username"] = auth["username"]
+            script_args["auth_password"] = auth["password"]
+            if auth.get("token_field"):
+                script_args["auth_token_field"] = auth["token_field"]
 
         result = await call_tool_safe(
             self.mcp, "generate_k6_script", script_args, verbose=cfg.verbose
