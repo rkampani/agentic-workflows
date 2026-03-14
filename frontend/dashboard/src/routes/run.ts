@@ -2,8 +2,8 @@
  * /api/run — SSE endpoint for streaming test runs.
  *
  * Supports two modes:
- *   POST /api/run/deterministic  — fixed 6-step pipeline via `python -m agent run`
- *   POST /api/run/agent          — natural language → agentic via `python -m agent`
+ *   POST /api/run/deterministic  — fixed 6-step pipeline via `python3 -m agent test`
+ *   POST /api/run/agent          — natural language → agentic via `python3 -m agent run`
  *
  * Both stream newline-delimited SSE events:
  *   data: {"type":"log","text":"..."}
@@ -77,7 +77,7 @@ router.post("/deterministic", (req: Request, res: Response) => {
 
   sseHeaders(res);
 
-  const args = ["-m", "agent", "run", "--service", service, "--env", env];
+  const args = ["-m", "agent", "test", "--service", service, "--env", env];
   if (users) args.push("--users", users);
   if (duration) args.push("--duration", duration);
   if (baseline) args.push("--baseline", baseline);
@@ -99,7 +99,7 @@ router.post("/agent", (req: Request, res: Response) => {
   }
 
   sseHeaders(res);
-  streamProcess(res, "python3", ["-m", "agent", message]);
+  streamProcess(res, "python3", ["-m", "agent", "run", message]);
 });
 
 export default router;
