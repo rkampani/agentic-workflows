@@ -54,14 +54,6 @@ npm install
 npm run build
 ```
 
-Individual server builds if needed:
-```bash
-npm run build:registry   # service-registry only
-npm run build:perf       # perf-test-server only
-npm run build:metrics    # spring-metrics only
-npm run build:analyzer   # results-analyzer only
-```
-
 ### 3. Set up your API key (agentic mode only)
 
 Create a `.env` file in the project root:
@@ -72,7 +64,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### 4. Verify everything is connected
 
 ```bash
-python -m agent check
+python3 -m agent check
 ```
 
 Expected output:
@@ -84,6 +76,14 @@ Expected output:
 
 All 4 servers connected, 16 total tools available.
 ```
+
+### 5. Start the dashboard (optional)
+
+```bash
+npm run dashboard
+```
+
+Opens a web UI at **http://localhost:3000** — run tests and view results without touching the command line.
 
 ---
 
@@ -103,6 +103,11 @@ services:
       dev:     "http://dev-host:8080/payment-service/v4"
       staging: "http://staging-host:8080/payment-service/v4"
     test_data_file: "test-data/payment-service/payment-service.json"
+    auth:                                      # optional — k6 fetches a live token before the test
+      url:      "http://localhost:8080/auth/token"
+      username: "perf-test-user"
+      password: "changeme"
+      # token_field: "access_token"            # which response field holds the token (default: access_token)
     include_endpoints:                         # only these endpoints are tested
       - "GET /order-payment/{entity_type}/{entity_id}"
     exclude_endpoints:                         # these are always skipped
@@ -120,6 +125,8 @@ defaults:
     - dev
     - staging
 ```
+
+If all your services share the same auth server you can set the URL and credentials once in `config/defaults.yaml` under `auth:` and omit them per service.
 
 ### Endpoint Filtering Rules
 
@@ -141,43 +148,74 @@ Pattern syntax:
 
 ### Test Data File
 
-Parameterize tests with real user IDs, auth tokens, and request bodies — like JMeter's CSV Data Set Config.
+Parameterize tests with real IDs and request bodies. Each virtual user gets a different row (round-robin).
+
+**Flat style — preferred.** Just put the fields your API expects. The platform reads the OpenAPI schema and automatically picks the right fields for each endpoint's body:
+
+```json
+[
+  { "entity_type": "account", "entity_id": "1001", "amount": 100, "currency": "USD" },
+  { "entity_type": "account", "entity_id": "1002", "amount": 200, "currency": "USD" }
+]
+```
+
+- Path placeholders like `{entity_id}` are always resolved from the row
+- POST/PUT body is built from whichever fields in the row match the OpenAPI schema
+- No `token` field needed when `auth:` is configured — the token is fetched automatically
+
+**Explicit style — when one row covers multiple endpoints with different bodies:**
 
 ```json
 [
   {
     "entity_type": "account",
     "entity_id":   "1001",
-    "token":       "Bearer eyJ...",
-    "body_payment": { "amount": 100, "currency": "USD" }
-  },
-  {
-    "entity_type": "account",
-    "entity_id":   "1002",
-    "token":       "Bearer eyJ...",
-    "body_payment": { "amount": 200, "currency": "USD" }
+    "body_POST_/api/v1/payments": { "amount": 100, "currency": "USD" },
+    "body_POST_/api/v1/refunds":  { "reason": "duplicate" }
   }
 ]
 ```
 
-Each virtual user gets a different row (round-robin). Field naming conventions:
-
-| Field | Purpose |
-|-------|---------|
-| `entity_id`, `user_id`, `order_id`, etc. | Replaces `{entity_id}` path placeholders |
-| `token` | Injected as `Authorization` header |
-| `body_<endpoint_name>` | Used as POST/PUT request body |
-| `header_<name>` | Sent as a custom HTTP header |
+Use `body_<METHOD>_<path>` to target a specific endpoint. Fallback: `body_<endpoint-name>` (e.g. `body_payments`).
 
 ---
 
-## Running Tests
+## Dashboard
+
+Start the web UI with:
+
+```bash
+npm run dashboard
+# → http://localhost:3000
+```
+
+**Run Test tab**
+
+| Mode | What it does |
+|------|-------------|
+| 🎯 Deterministic | Pick a service, environment, VUs, and duration from a form. Same inputs → same run every time. |
+| 🤖 Agent Mode | Describe what you want tested in plain English. The AI decides the strategy. |
+
+Both modes stream live output to the browser as the test runs.
+
+**Results tab**
+
+Lists every past run. Click any entry to see:
+- p95 / p99 latency, throughput (req/s), error rate
+- Latency distribution bar chart
+- Threshold pass/fail summary
+
+No API key is needed to use Deterministic mode or view results.
+
+---
+
+## Running Tests (CLI)
 
 ### Discover endpoints first (no API key needed)
 
 ```bash
-python -m agent discover payment-service
-python -m agent discover payment-service --env dev
+python3 -m agent discover payment-service
+python3 -m agent discover payment-service --env dev
 ```
 
 ---
@@ -188,19 +226,19 @@ Describe what you want in plain English. The AI decides which tools to call, in 
 
 ```bash
 # Basic test
-python -m agent run "test payment-service with 3 users on local"
+python3 -m agent run "test payment-service with 3 users on local"
 
 # Capacity planning
-python -m agent run "find the breaking point of payment-service on dev"
+python3 -m agent run "find the breaking point of payment-service on dev"
 
 # Regression check
-python -m agent run "run payment-service and compare against baseline payment-v1.0"
+python3 -m agent run "run payment-service and compare against baseline payment-v1.0"
 
 # With detailed reasoning output
-python -m agent run "test payment-service" --verbose
+python3 -m agent run "test payment-service" --verbose
 
 # CI/CD mode (exits 0=pass, 1=regression)
-python -m agent run "regression check payment-service staging" --ci
+python3 -m agent run "regression check payment-service staging" --ci
 ```
 
 What the AI does for you:
@@ -218,19 +256,19 @@ Fixed 6-step pipeline — same steps every run, no AI reasoning involved.
 
 ```bash
 # Basic — uses safety caps from services.yaml as defaults
-python -m agent test --service payment-service
+python3 -m agent test --service payment-service
 
 # With explicit parameters
-python -m agent test --service payment-service --users 3 --duration 30 --env dev
+python3 -m agent test --service payment-service --users 3 --duration 30 --env dev
 
 # Save results as a named baseline
-python -m agent test --service payment-service --save-as payment-v1.0
+python3 -m agent test --service payment-service --save-as payment-v1.0
 
 # Compare against a saved baseline
-python -m agent test --service payment-service --baseline payment-v1.0
+python3 -m agent test --service payment-service --baseline payment-v1.0
 
 # Both save and compare
-python -m agent test --service payment-service --baseline payment-v1.0 --save-as payment-v1.1
+python3 -m agent test --service payment-service --baseline payment-v1.0 --save-as payment-v1.1
 ```
 
 #### Using environment variables (CI/CD pipelines)
@@ -244,7 +282,7 @@ export PERF_USERS=3
 export PERF_DURATION=30
 export PERF_BASELINE=payment-v1.0
 
-python -m agent test --ci     # exits 0=pass, 1=regression detected
+python3 -m agent test --ci     # exits 0=pass, 1=regression detected
 ```
 
 #### What the deterministic pipeline runs
@@ -305,23 +343,23 @@ p95: 1840ms | p99: 4200ms | errors: 0.5%
 
 ```bash
 # Agentic mode
-python -m agent run "<natural language instruction>"
-python -m agent run "<instruction>" --verbose          # show each tool call
-python -m agent run "<instruction>" --ci               # CI mode
-python -m agent run "<instruction>" --model claude-opus-4-6  # different model
+python3 -m agent run "<natural language instruction>"
+python3 -m agent run "<instruction>" --verbose          # show each tool call
+python3 -m agent run "<instruction>" --ci               # CI mode
+python3 -m agent run "<instruction>" --model claude-opus-4-6  # different model
 
 # Deterministic mode
-python -m agent test --service <name>
-python -m agent test --service <name> --env <env> --users <n> --duration <s>
-python -m agent test --service <name> --baseline <name>
-python -m agent test --service <name> --save-as <name>
-python -m agent test --service <name> --ci
+python3 -m agent test --service <name>
+python3 -m agent test --service <name> --env <env> --users <n> --duration <s>
+python3 -m agent test --service <name> --baseline <name>
+python3 -m agent test --service <name> --save-as <name>
+python3 -m agent test --service <name> --ci
 
 # Utilities
-python -m agent discover <service>                     # list testable endpoints
-python -m agent discover <service> --env staging
-python -m agent check                                  # verify MCP servers are running
-python -m agent list-tools                             # show all available MCP tools
+python3 -m agent discover <service>                     # list testable endpoints
+python3 -m agent discover <service> --env staging
+python3 -m agent check                                  # verify MCP servers are running
+python3 -m agent list-tools                             # show all available MCP tools
 ```
 
 ---
@@ -350,23 +388,29 @@ All load test traffic goes **directly from your machine to your service** — it
 
 ```
 agentic-workflows/
-├── agent/                        # Python agent
-│   ├── main.py                   # CLI entry point (run, test, discover, check)
-│   ├── agent.py                  # ReAct loop — agentic mode
-│   ├── mcp_client.py             # MCP server connection manager
-│   └── prompts.py                # System prompt for Claude
-├── mcp-servers/                  # TypeScript MCP servers
-│   ├── service-registry/         # list_services, discover_endpoints, get_service_config
-│   ├── perf-test-server/         # generate_k6_script, run_k6_test, list_test_scripts
-│   ├── spring-metrics/           # check_health, snapshot_metrics, get_runtime_metrics
-│   └── results-analyzer/         # analyze_results, compare_baseline, save_baseline, generate_report
-├── config/
-│   └── services.yaml             # service catalog — register services here
-├── test-data/                    # per-VU test data (user IDs, tokens, request bodies)
-├── test-scripts/                 # generated k6 scripts (auto-created)
-├── results/                      # k6 results, snapshots, reports (auto-created)
-├── baselines/                    # saved baselines for regression tracking (auto-created)
-├── .env                          # ANTHROPIC_API_KEY (agentic mode only)
-├── pyproject.toml                # Python project config & dependencies
-└── package.json                  # Node.js workspace config
+├── backend/
+│   ├── agent/                        # Python agent (CLI)
+│   │   ├── prompts/                  # Claude system prompts (edit here to tune AI behaviour)
+│   │   │   ├── system_prompt.txt
+│   │   │   └── ci_mode_prompt.txt
+│   │   └── ...
+│   └── mcp-servers/                  # TypeScript backend servers
+│       ├── service-registry/         # discovers endpoints from live OpenAPI specs
+│       ├── perf-test-server/         # generates and runs k6 load tests
+│       ├── spring-metrics/           # captures server-side metrics
+│       └── results-analyzer/         # grades results, compares baselines, generates reports
+├── frontend/
+│   └── dashboard/                    # web UI (npm run dashboard → localhost:3000)
+│       └── public/                   # HTML / CSS / JS — no build step for the UI
+├── config/                           # shared configuration (read by both backend and frontend)
+│   ├── services.yaml                 # register your services here
+│   ├── defaults.yaml                 # global defaults (users cap, thresholds, auth fallbacks)
+│   └── mcp-servers.yaml              # MCP server process definitions
+├── test-data/                        # per-VU test data rows (IDs, request bodies)
+├── test-scripts/                     # generated k6 scripts (auto-created)
+├── results/                          # k6 results, snapshots, reports (auto-created)
+├── baselines/                        # saved baselines for regression tracking (auto-created)
+├── .env                              # ANTHROPIC_API_KEY (agent mode only)
+├── pyproject.toml                    # Python dependencies
+└── package.json                      # Node.js workspace (npm workspaces)
 ```

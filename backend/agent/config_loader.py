@@ -17,7 +17,7 @@ from typing import Optional
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 DEFAULTS_PATH = PROJECT_ROOT / "config" / "defaults.yaml"
 
 _defaults_cache: dict | None = None
