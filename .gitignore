@@ -15,6 +15,7 @@ __pycache__/
 venv/
 .eggs/
 pip-log.txt
+.pytest_cache/
 
 # ── Secrets ──────────────────────────────────────
 .env
