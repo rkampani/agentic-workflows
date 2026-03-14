@@ -22,7 +22,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = resolve(__dirname, "../../..");
+const PROJECT_ROOT = resolve(__dirname, "../../../..");
 const SNAPSHOTS_DIR = resolve(PROJECT_ROOT, "results", "snapshots");
 
 if (!existsSync(SNAPSHOTS_DIR)) mkdirSync(SNAPSHOTS_DIR, { recursive: true });

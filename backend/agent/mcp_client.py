@@ -17,7 +17,7 @@ from mcp.client.stdio import stdio_client
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_SERVERS_CONFIG = PROJECT_ROOT / "config" / "mcp-servers.yaml"
 
 
@@ -65,7 +65,7 @@ def _load_server_configs() -> list[MCPServerConfig]:
 
     # In-code fallback (matches the YAML defaults exactly)
     logger.info("config/mcp-servers.yaml not found — using built-in server list")
-    mcp_dir = PROJECT_ROOT / "mcp-servers"
+    mcp_dir = PROJECT_ROOT / "backend" / "mcp-servers"
     return [
         MCPServerConfig(
             name="service-registry",

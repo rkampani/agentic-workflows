@@ -27,4 +27,5 @@ dev = [
 perf-agent = "agent.main:app"
 
 [tool.setuptools.packages.find]
+where = ["backend"]
 include = ["agent*"]

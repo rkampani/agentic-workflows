@@ -47,7 +47,7 @@ export function loadServicesConfig(): ServicesConfig {
   if (_servicesCache) return _servicesCache;
   const configPath =
     process.env.SERVICES_CONFIG_PATH ||
-    resolve(__dirname, "../../../../config/services.yaml");
+    resolve(__dirname, "../../../../../config/services.yaml");
   const raw = readFileSync(configPath, "utf-8");
   _servicesCache = parse(raw) as ServicesConfig;
   return _servicesCache;
@@ -58,7 +58,7 @@ export function loadAuthDefaults(): Partial<AuthConfig> {
   try {
     const defaultsPath =
       process.env.DEFAULTS_CONFIG_PATH ||
-      resolve(__dirname, "../../../../config/defaults.yaml");
+      resolve(__dirname, "../../../../../config/defaults.yaml");
     const raw = readFileSync(defaultsPath, "utf-8");
     const parsed = parse(raw) as DefaultsYaml;
     _authDefaultsCache = parsed?.auth ?? {};

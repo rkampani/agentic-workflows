@@ -5,7 +5,7 @@ import { parse } from "yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const PROJECT_ROOT = resolve(__dirname, "../../../..");
+export const PROJECT_ROOT = resolve(__dirname, "../../../../..");
 export const SCRIPTS_DIR = resolve(PROJECT_ROOT, "test-scripts");
 export const RESULTS_DIR = resolve(PROJECT_ROOT, "results");
 

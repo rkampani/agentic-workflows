@@ -1,8 +1,9 @@
-# ── Node / TypeScript ────────────────────────────
+# ── Node / TypeScript build output ───────────────
 node_modules/
 dist/
 *.js.map
 *.d.ts
+*.d.ts.map
 *.tsbuildinfo
 
 # ── Python ───────────────────────────────────────
@@ -13,22 +14,23 @@ __pycache__/
 .venv/
 venv/
 .eggs/
+pip-log.txt
+.pytest_cache/
 
 # ── Secrets ──────────────────────────────────────
 .env
 .env.*
+!.env.example
 
-# ── Generated test scripts (agent creates these) ─
+# ── Runtime-generated (never commit) ─────────────
 test-scripts/
-
-# ── Test results (local only, never ship) ────────
 results/
 baselines/
 
-# ── Test data (synthetic, local only) ────────────
+# ── Test data (real IDs / credentials, local only) ──
 test-data/
 
-# ── Mock service (dev tool, not shippable) ───────
+# ── Dev tooling only ─────────────────────────────
 mock-service/
 
 # ── OS / IDE ─────────────────────────────────────
@@ -38,6 +40,6 @@ mock-service/
 *.swp
 *.swo
 
-# ── Claude / misc ────────────────────────────────
+# ── Misc ─────────────────────────────────────────
 .claude/
 package-lock.json

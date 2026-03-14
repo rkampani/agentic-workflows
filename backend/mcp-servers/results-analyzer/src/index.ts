@@ -12,7 +12,7 @@ import { fileURLToPath } from "url";
 import { parse } from "yaml";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = resolve(__dirname, "../../..");
+const PROJECT_ROOT = resolve(__dirname, "../../../..");
 const RESULTS_DIR = resolve(PROJECT_ROOT, "results");
 const BASELINES_DIR = resolve(PROJECT_ROOT, "baselines");
 const REPORTS_DIR = resolve(PROJECT_ROOT, "results", "reports");
