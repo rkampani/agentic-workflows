@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Performance Testing Dashboard</title>
+  <title>API Load Testing</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <div class="logo">⚡ PerfAgent</div>
+    <div class="logo">⚡ API Load Testing</div>
     <nav>
       <button class="nav-btn active" data-tab="run">Run Test</button>
       <button class="nav-btn" data-tab="results">Results</button>
@@ -22,22 +22,22 @@
       <button class="mode-btn active" data-mode="deterministic">
         <span class="icon">🎯</span>
         <span>
-          <strong>Deterministic</strong>
-          <small>Fixed parameters — reproducible runs</small>
+          <strong>Configure &amp; Run</strong>
+          <small>Set service, users and duration — same result every time</small>
         </span>
       </button>
       <button class="mode-btn" data-mode="agent">
-        <span class="icon">🤖</span>
+        <span class="icon">✨</span>
         <span>
-          <strong>Agent Mode</strong>
-          <small>Describe what to test — AI decides</small>
+          <strong>AI-Assisted</strong>
+          <small>Describe what to test in plain English</small>
         </span>
       </button>
     </div>
 
     <!-- Deterministic form -->
     <section id="form-deterministic" class="run-form card">
-      <h2>Configure Test</h2>
+      <h2>Configure Your Test</h2>
       <div class="form-grid">
         <label>
           Service
@@ -73,13 +73,13 @@
 
     <!-- Agent form -->
     <section id="form-agent" class="run-form card" style="display:none">
-      <h2>Describe What You Want to Test</h2>
+      <h2>What would you like to test?</h2>
       <textarea
         id="a-message"
         rows="4"
         placeholder="e.g. Run a load test on payment-service local with 10 users for 60 seconds and compare against the v1.0 baseline"
       ></textarea>
-      <button id="a-run-btn" class="run-btn">▶ Ask Agent</button>
+      <button id="a-run-btn" class="run-btn">▶ Run Test</button>
     </section>
 
     <!-- Live output -->
